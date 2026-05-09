@@ -1,6 +1,7 @@
 import cors from "@fastify/cors";
 import Fastify from "fastify";
 import { createReflectionBot } from "./bot.js";
+import { loadDashboardData } from "./dashboardData.js";
 import { env } from "./env.js";
 import { InMemoryReflectionStore } from "./inMemoryStore.js";
 
@@ -14,6 +15,19 @@ app.get("/health", async () => ({
   ok: true,
   telegramConfigured: Boolean(bot)
 }));
+
+app.get("/api/dashboard", async (_request, reply) => {
+  try {
+    return await loadDashboardData();
+  } catch (error) {
+    app.log.error(error);
+    reply.code(500);
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "Unable to load dashboard data"
+    };
+  }
+});
 
 app.post("/telegram/webhook", async (request, reply) => {
   if (!bot) {
