@@ -1,6 +1,7 @@
 export * from "./agent.js";
 export * from "./config.js";
 export * from "./gibbs.js";
+export * from "./model.js";
 export * from "./prompts.js";
 export * from "./skills.js";
 export * from "./storage.js";

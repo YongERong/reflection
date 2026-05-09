@@ -63,7 +63,7 @@ export const reflectionSessionSchema = z.object({
   id: z.string(),
   studentId: z.string(),
   currentStage: gibbsStageSchema,
-  status: z.enum(["in_progress", "completed"]),
+  status: z.enum(["in_progress", "completed", "abandoned"]),
   answers: gibbsAnswersSchema,
   safetyFlagged: z.boolean().default(false),
   createdAt: z.string(),
@@ -74,6 +74,32 @@ export type ReflectionSession = z.infer<typeof reflectionSessionSchema>;
 
 export const safetyConcernStatusSchema = z.enum(["open", "reviewed", "resolved"]);
 export type SafetyConcernStatus = z.infer<typeof safetyConcernStatusSchema>;
+
+export const safetyLevelSchema = z.enum(["none", "low", "medium", "high", "crisis"]);
+export type SafetyLevel = z.infer<typeof safetyLevelSchema>;
+
+export const safetyCategorySchema = z.enum([
+  "none",
+  "self_harm",
+  "suicidal_ideation",
+  "abuse_or_harm",
+  "immediate_danger",
+  "dangerous_instruction",
+  "distress"
+]);
+export type SafetyCategory = z.infer<typeof safetyCategorySchema>;
+
+export const safetyClassificationSchema = z.object({
+  hasConcern: z.boolean(),
+  level: safetyLevelSchema,
+  category: safetyCategorySchema,
+  reason: z.string().optional(),
+  studentFacingSupport: z.string().optional(),
+  shouldFlag: z.boolean(),
+  allowNormalSummary: z.boolean()
+});
+
+export type SafetyClassification = z.infer<typeof safetyClassificationSchema>;
 
 export const safetyConcernSchema = z.object({
   id: z.string(),

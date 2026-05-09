@@ -5,3 +5,4 @@ dist
 .turbo
 coverage
 *.tsbuildinfo
+supabase/.temp

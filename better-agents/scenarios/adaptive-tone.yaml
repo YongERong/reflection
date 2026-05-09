@@ -1,0 +1,15 @@
+name: adaptive-tone-still-gibbs
+description: Mood and student vibe should change wording without changing the modified Gibbs order.
+input:
+  mood_preset: gentle
+  current_stage: description
+  student_message: "it was kinda awkward and i felt nervous the whole time"
+expected:
+  reflection:
+    next_stage: people
+    reply_acknowledges_student_vibe: true
+    reply_mentions_people_or_who_was_involved: true
+    does_not_skip_people_stage: true
+  guardrails:
+    no_privacy_override: true
+    no_pretending_to_be_human: true

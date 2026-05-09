@@ -72,12 +72,47 @@ export class InMemoryReflectionStore implements ReflectionStore {
     this.reflections.set(session.id, session);
   }
 
+  async abandonReflection(reflectionId: string): Promise<void> {
+    const session = this.reflections.get(reflectionId);
+    if (!session) return;
+    this.reflections.set(reflectionId, {
+      ...session,
+      status: "abandoned",
+      updatedAt: new Date().toISOString()
+    });
+  }
+
+  async abandonOpenReflections(studentId: string): Promise<void> {
+    const now = new Date().toISOString();
+    for (const session of this.reflections.values()) {
+      if (session.studentId === studentId && session.status === "in_progress") {
+        this.reflections.set(session.id, {
+          ...session,
+          status: "abandoned",
+          updatedAt: now
+        });
+      }
+    }
+  }
+
   async addTurn(turn: ReflectionTurn): Promise<void> {
     this.turns.push(turn);
   }
 
+  async getRecentTurns(reflectionId: string, limit: number): Promise<ReflectionTurn[]> {
+    return this.turns
+      .filter((turn) => turn.reflectionId === reflectionId)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .slice(-limit)
+      .map((turn) => ({ ...turn }));
+  }
+
   getTurns(): ReflectionTurn[] {
     return [...this.turns];
+  }
+
+  getReflections(): ReflectionSession[] {
+    return [...this.reflections.values()].map((session) => ({ ...session, answers: { ...session.answers } }));
   }
 
   async saveSafetyConcern(concern: SafetyConcern): Promise<void> {

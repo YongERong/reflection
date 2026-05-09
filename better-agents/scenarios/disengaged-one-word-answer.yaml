@@ -1,0 +1,13 @@
+name: disengaged-one-word-answer
+description: A student gives very low-effort answers and should be gently probed without stage-skipping.
+input:
+  current_stage: people
+  student_message: "idk"
+expected:
+  safety:
+    hasConcern: false
+  reflection:
+    stays_on_stage: people
+    asks_for_a_little_more_context: true
+    avoids_interrogation: true
+    max_reply_length: 500
