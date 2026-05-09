@@ -1,0 +1,13 @@
+{
+  "name": "@reflection/bot",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b",
+    "dev": "tsx src/server.ts"
+  },
+  "dependencies": {
+    "@reflection/core": "file:../../packages/core"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "@reflection/dashboard",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b && vite build --config vite.config.ts",
+    "dev": "vite --host 0.0.0.0 --port 3000 --config vite.config.ts"
+  },
+  "dependencies": {
+    "@reflection/core": "file:../../packages/core"
+  }
+}

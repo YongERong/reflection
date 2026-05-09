@@ -1,0 +1,24 @@
+name: full_gibbs_cycle_with_people
+description: Student completes every modified Gibbs stage and receives a summary plus actionables.
+messages:
+  - role: user
+    content: /reflect
+  - role: user
+    content: I attended a community service event at the library.
+  - role: user
+    content: I went with Mei and our CCA mentor.
+  - role: user
+    content: I felt nervous at first but more confident later.
+  - role: user
+    content: The teamwork went well, but I struggled to explain instructions clearly.
+  - role: user
+    content: I think I was unfamiliar with the younger students' questions.
+  - role: user
+    content: I learned that preparation helps me communicate more clearly.
+  - role: user
+    content: Next time I will prepare three examples before helping.
+expectations:
+  - includes_stage: people
+  - produces_summary: true
+  - produces_actionables: true
+  - teacher_visible_by_default: false
