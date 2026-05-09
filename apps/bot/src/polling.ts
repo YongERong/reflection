@@ -1,11 +1,14 @@
 import { createReflectionBot } from "./bot.js";
 import { env } from "./env.js";
+import { setupBotObservability } from "./observability.js";
 import { createModelClient } from "./openAIModelClient.js";
 import { createRuntimeStore } from "./storeFactory.js";
 
 if (!env.TELEGRAM_BOT_TOKEN) {
   throw new Error("TELEGRAM_BOT_TOKEN is required for polling mode.");
 }
+
+setupBotObservability();
 
 const store = createRuntimeStore();
 const model = createModelClient();

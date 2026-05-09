@@ -1,0 +1,12 @@
+{
+  "prompts": {
+    "reflection-coach": {
+      "version": "1",
+      "file": "prompts/reflection-coach.prompt.yaml"
+    },
+    "reflection-summary": {
+      "version": "1",
+      "file": "prompts/reflection-summary.prompt.yaml"
+    }
+  }
+}

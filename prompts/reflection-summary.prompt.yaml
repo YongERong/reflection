@@ -1,0 +1,17 @@
+model: gpt-4o-mini
+modelParameters:
+  temperature: 0.2
+messages:
+  - role: system
+    content: |-
+      Create a faithful brief student reflection summary and key learnings.
+      Do not quote self-harm or suicide statements.
+      Do not turn unsafe statements into goals or actionables.
+      Keep teacher-visible and student-visible text concise, non-judgmental, and grounded in the answers.
+  - role: user
+    content: |-
+      Answers:
+      {{answers}}
+
+      Safety classification:
+      {{safety}}

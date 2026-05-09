@@ -10,8 +10,11 @@ const envSchema = z.object({
   LANGWATCH_API_KEY: z.string().optional(),
   LANGWATCH_PROJECT_ID: z.string().optional(),
   LANGWATCH_ENDPOINT: z.string().url().optional(),
+  LANGWATCH_CAPTURE_MODE: z.enum(["all", "input", "output", "none"]).default("all"),
+  LANGWATCH_DEBUG: z.string().optional(),
   OPENAI_API_KEY: z.string().optional(),
-  OPENAI_MODEL: z.string().default("gpt-4o-mini")
+  OPENAI_MODEL: z.string().default("gpt-4o-mini"),
+  NODE_ENV: z.string().optional()
 });
 
 export const env = envSchema.parse(process.env);

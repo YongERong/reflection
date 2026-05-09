@@ -3,8 +3,11 @@ import Fastify from "fastify";
 import { createReflectionBot } from "./bot.js";
 import { loadDashboardData } from "./dashboardData.js";
 import { env } from "./env.js";
+import { setupBotObservability } from "./observability.js";
 import { createModelClient } from "./openAIModelClient.js";
 import { createRuntimeStore } from "./storeFactory.js";
+
+setupBotObservability();
 
 const app = Fastify({ logger: true });
 await app.register(cors, { origin: true });

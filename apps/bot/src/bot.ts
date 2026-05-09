@@ -10,6 +10,7 @@ import {
   type ReflectionStore,
   type StudentProfile
 } from "@reflection/core";
+import { captureTraceInput, captureTraceOutput, getBotTracer } from "./observability.js";
 
 export const openReflectionMessage =
   "You already have a reflection in progress. Send /continue to keep going, or /new to start over.";
@@ -108,45 +109,87 @@ export async function handleStudentReflectionMessage(input: {
   student: Awaited<ReturnType<typeof getStudent>>;
   text: string;
 }): Promise<string[]> {
-  const session = input.session ?? (await input.store.createReflection(input.student.id));
-  const studentTurn = {
-    id: createId("turn"),
-    reflectionId: session.id,
-    role: "student",
-    content: input.text,
-    stage: session.currentStage,
-    createdAt: new Date().toISOString()
-  } as const;
-  await input.store.addTurn(studentTurn);
-
-  const result = await processReflectionText({
-    store: input.store,
-    model: input.model,
-    session,
-    student: input.student,
-    text: input.text,
-    studentTurnId: studentTurn.id
-  });
-
-  await input.store.saveReflection(result.session);
-
-  if (result.summary) {
-    await input.store.saveSummary(result.summary);
-  }
-
-  const replies = buildReflectionReplies(result);
-  for (const reply of replies) {
-    await input.store.addTurn({
-      id: createId("turn"),
-      reflectionId: result.session.id,
-      role: "bot",
-      content: reply,
-      stage: result.session.currentStage,
-      createdAt: new Date().toISOString()
+  return getBotTracer().withActiveSpan("reflection.student_message", async (span) => {
+    const session = input.session ?? (await input.store.createReflection(input.student.id));
+    span.setType("workflow");
+    captureTraceInput(span, "json", {
+      reflectionId: session.id,
+      studentId: input.student.id,
+      stage: session.currentStage,
+      status: session.status,
+      text: input.text
     });
-  }
+    span.setAttributes({
+      "reflection.id": session.id,
+      "reflection.student_id": input.student.id,
+      "reflection.stage": session.currentStage,
+      "reflection.session_status": session.status
+    });
 
-  return replies;
+    const studentTurn = {
+      id: createId("turn"),
+      reflectionId: session.id,
+      role: "student",
+      content: input.text,
+      stage: session.currentStage,
+      createdAt: new Date().toISOString()
+    } as const;
+    await input.store.addTurn(studentTurn);
+
+    const result = await processReflectionText({
+      store: input.store,
+      model: input.model,
+      session,
+      student: input.student,
+      text: input.text,
+      studentTurnId: studentTurn.id
+    });
+
+    await input.store.saveReflection(result.session);
+
+    if (result.summary) {
+      await input.store.saveSummary(result.summary);
+    }
+
+    const replies = buildReflectionReplies(result);
+    span.setAttributes({
+      "reflection.completed": result.completed,
+      "reflection.next_stage": result.session.currentStage,
+      "reflection.reply_kind": result.replyKind,
+      "reflection.safety_flagged": result.safetyConcern.hasConcern
+    });
+    captureTraceOutput(span, {
+      replies,
+      completed: result.completed,
+      currentStage: result.session.currentStage,
+      replyKind: result.replyKind,
+      safetyConcern: {
+        hasConcern: result.safetyConcern.hasConcern,
+        level: result.safetyConcern.level,
+        category: result.safetyConcern.category
+      },
+      summary: result.summary
+        ? {
+            promptVersionId: result.summary.promptVersionId,
+            actionablesCount: result.summary.actionables.length,
+            keyLearningsCount: result.summary.keyLearnings.length
+          }
+        : undefined
+    });
+
+    for (const reply of replies) {
+      await input.store.addTurn({
+        id: createId("turn"),
+        reflectionId: result.session.id,
+        role: "bot",
+        content: reply,
+        stage: result.session.currentStage,
+        createdAt: new Date().toISOString()
+      });
+    }
+
+    return replies;
+  });
 }
 
 export async function processReflectionText(input: {
