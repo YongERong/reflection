@@ -1,6 +1,7 @@
 import type { ModelClient, ModelMessage } from "@reflection/core";
 import type { z } from "zod";
 import { env } from "./env.js";
+import { createModelRouter, type ComparisonModelName, type ModelRouter } from "./modelRouter.js";
 import { captureTraceInput, captureTraceOutput, getBotTracer } from "./observability.js";
 
 export class OpenAIModelClient implements ModelClient {
@@ -117,6 +118,17 @@ export class OpenAIModelClient implements ModelClient {
 
 export function createModelClient(): ModelClient | undefined {
   return env.OPENAI_API_KEY ? new OpenAIModelClient(env.OPENAI_API_KEY) : undefined;
+}
+
+export function createComparisonModelRouter(): ModelRouter {
+  const clients: Partial<Record<ComparisonModelName, ModelClient>> = env.OPENAI_API_KEY
+    ? {
+        "gpt-4o-mini": new OpenAIModelClient(env.OPENAI_API_KEY, "gpt-4o-mini"),
+        "gpt-5-mini": new OpenAIModelClient(env.OPENAI_API_KEY, "gpt-5-mini")
+      }
+    : {};
+
+  return createModelRouter(clients);
 }
 
 function traceModelSuccess(task: string): void {

@@ -4,7 +4,7 @@ import { createReflectionBot } from "./bot.js";
 import { loadDashboardData } from "./dashboardData.js";
 import { env } from "./env.js";
 import { setupBotObservability } from "./observability.js";
-import { createModelClient } from "./openAIModelClient.js";
+import { createComparisonModelRouter, createModelClient } from "./openAIModelClient.js";
 import { createRuntimeStore } from "./storeFactory.js";
 
 setupBotObservability();
@@ -14,7 +14,8 @@ await app.register(cors, { origin: true });
 
 const store = createRuntimeStore();
 const model = createModelClient();
-const bot = env.TELEGRAM_BOT_TOKEN ? createReflectionBot(env.TELEGRAM_BOT_TOKEN, store, model) : null;
+const modelRouter = createComparisonModelRouter();
+const bot = env.TELEGRAM_BOT_TOKEN ? createReflectionBot(env.TELEGRAM_BOT_TOKEN, store, model, modelRouter) : null;
 
 app.get("/health", async () => {
   const storage = store.healthCheck ? await store.healthCheck() : { ok: true };

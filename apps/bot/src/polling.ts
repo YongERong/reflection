@@ -1,7 +1,7 @@
 import { createReflectionBot } from "./bot.js";
 import { env } from "./env.js";
 import { setupBotObservability } from "./observability.js";
-import { createModelClient } from "./openAIModelClient.js";
+import { createComparisonModelRouter, createModelClient } from "./openAIModelClient.js";
 import { createRuntimeStore } from "./storeFactory.js";
 
 if (!env.TELEGRAM_BOT_TOKEN) {
@@ -12,7 +12,8 @@ setupBotObservability();
 
 const store = createRuntimeStore();
 const model = createModelClient();
-const bot = createReflectionBot(env.TELEGRAM_BOT_TOKEN, store, model);
+const modelRouter = createComparisonModelRouter();
+const bot = createReflectionBot(env.TELEGRAM_BOT_TOKEN, store, model, modelRouter);
 const me = await bot.api.getMe();
 
 console.log(`Reflection bot is running in Telegram polling mode as @${me.username}.`);

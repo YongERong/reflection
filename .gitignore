@@ -1,6 +1,8 @@
 node_modules
 dist
 .env
+.agents/
+better-agents/evals/artifacts/
 .DS_Store
 .turbo
 coverage
