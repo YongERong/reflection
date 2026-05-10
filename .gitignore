@@ -8,3 +8,4 @@ better-agents/evals/artifacts/
 coverage
 *.tsbuildinfo
 supabase/.temp
+.codex/

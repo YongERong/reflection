@@ -1,11 +1,72 @@
 {
   "version": 1,
   "skills": {
+    "analytics": {
+      "source": "langwatch/skills",
+      "sourceType": "github",
+      "skillPath": "analytics/SKILL.md",
+      "computedHash": "21bb893b3e08db94d7923e1f6c4e3c472d8d65acdc18c13883a75206e2235645"
+    },
+    "datasets": {
+      "source": "langwatch/skills",
+      "sourceType": "github",
+      "skillPath": "datasets/SKILL.md",
+      "computedHash": "1adfc1628b1a3131cfdc95cf795242010102130586033a7789342a57118928ad"
+    },
+    "deep-research": {
+      "source": "Imbad0202/academic-research-skills",
+      "sourceType": "github",
+      "skillPath": "deep-research/SKILL.md",
+      "computedHash": "b2e9efae37aaecc7cbdd085eb7162b6fb8bb9f443d5c270b280e51138a10093e"
+    },
+    "evaluations": {
+      "source": "langwatch/skills",
+      "sourceType": "github",
+      "skillPath": "evaluations/SKILL.md",
+      "computedHash": "eeb053f8562e9ac8f2718c1b4421603f6373ef40d8791363d793a4be6d9a4d36"
+    },
+    "level-up": {
+      "source": "langwatch/skills",
+      "sourceType": "github",
+      "skillPath": "level-up/SKILL.md",
+      "computedHash": "9226f86aca651aa6501665254e77bf56a3550648173b87d9b4c9289a3aa26e54"
+    },
+    "prompts": {
+      "source": "langwatch/skills",
+      "sourceType": "github",
+      "skillPath": "prompts/SKILL.md",
+      "computedHash": "afaf052749be5c7e5e9df72d6c4929b7928ce2ffae96c0c37e14b737c41505f3"
+    },
+    "scenarios": {
+      "source": "langwatch/skills",
+      "sourceType": "github",
+      "skillPath": "scenarios/SKILL.md",
+      "computedHash": "7950792cf2d2b062d199e1ee51f8fdccae3d2ea8db2a7ef4bba62ee5e5f132ad"
+    },
     "shadcn": {
       "source": "shadcn/ui",
       "sourceType": "github",
       "skillPath": "skills/shadcn/SKILL.md",
       "computedHash": "80a6226e78f6d1fe464214ae0ef449d49d8ffaa3e7704f011e9b418c678ad4d1"
+    },
+    "supabase": {
+      "source": "supabase/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/supabase/SKILL.md",
+      "computedHash": "45a3cdccc364a4bbd6cdf700fc069e9f24ebc0428098746cbfbf8b18a5e160d2"
+    },
+    "supabase-postgres-best-practices": {
+      "source": "supabase/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/supabase-postgres-best-practices/SKILL.md",
+      "computedHash": "d606a1146be6d54fb9e73f718b5320b9acac5ff2ba2d7230a555df4b5a923b4a"
+    },
+    "tracing": {
+      "source": "langwatch/skills",
+      "sourceType": "github",
+      "skillPath": "tracing/SKILL.md",
+      "computedHash": "3365235ba59503b0759660234c4adc9a58d3439e27368182c5cb617911721de8"
+
     }
   }
 }
