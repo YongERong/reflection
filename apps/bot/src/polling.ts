@@ -13,12 +13,15 @@ setupBotObservability();
 const store = createRuntimeStore();
 const model = createModelClient();
 const modelRouter = createComparisonModelRouter();
-const bot = createReflectionBot(env.TELEGRAM_BOT_TOKEN, store, model, modelRouter);
+const bot = createReflectionBot(env.TELEGRAM_BOT_TOKEN, store, model, modelRouter, {
+  responseDelaySeconds: env.BOT_RESPONSE_DELAY,
+  replySplitRate: env.BOT_REPLY_SPLIT_RATE
+});
 const me = await bot.api.getMe();
 
 console.log(`Reflection bot is running in Telegram polling mode as @${me.username}.`);
 console.log(
-  `Storage backend: ${store.kind}. LangWatch configured: ${Boolean(env.LANGWATCH_API_KEY)}. Model configured: ${Boolean(model)}.`
+  `Storage backend: ${store.kind}. LangWatch configured: ${Boolean(env.LANGWATCH_API_KEY)}. Model configured: ${Boolean(model)}. Bot response delay: ${env.BOT_RESPONSE_DELAY}s. Reply split rate: ${env.BOT_REPLY_SPLIT_RATE}.`
 );
 console.log("Use /start or /reflect in Telegram to test the full student flow.");
 

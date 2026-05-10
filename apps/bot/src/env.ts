@@ -12,9 +12,41 @@ const envSchema = z.object({
   LANGWATCH_ENDPOINT: z.string().url().optional(),
   LANGWATCH_CAPTURE_MODE: z.enum(["all", "input", "output", "none"]).default("all"),
   LANGWATCH_DEBUG: z.string().optional(),
+  BOT_RESPONSE_DELAY: z
+    .string()
+    .optional()
+    .transform((value) => parseBotResponseDelay(value)),
+  BOT_REPLY_SPLIT_RATE: z
+    .string()
+    .optional()
+    .transform((value) => parseBotReplySplitRate(value)),
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_MODEL: z.string().default("gpt-4o-mini"),
   NODE_ENV: z.string().optional()
 });
 
 export const env = envSchema.parse(process.env);
+
+export function parseBotResponseDelay(value: string | undefined): number {
+  if (value === undefined || value.trim() === "") return 5;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || !Number.isInteger(parsed)) {
+    throw new Error("BOT_RESPONSE_DELAY must be an integer number of seconds between 0 and 30.");
+  }
+  if (parsed < 0 || parsed > 30) {
+    throw new Error("BOT_RESPONSE_DELAY must be between 0 and 30 seconds.");
+  }
+  return parsed;
+}
+
+export function parseBotReplySplitRate(value: string | undefined): number {
+  if (value === undefined || value.trim() === "") return 0.2;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    throw new Error("BOT_REPLY_SPLIT_RATE must be a number between 0 and 1.");
+  }
+  if (parsed < 0 || parsed > 1) {
+    throw new Error("BOT_REPLY_SPLIT_RATE must be between 0 and 1.");
+  }
+  return parsed;
+}

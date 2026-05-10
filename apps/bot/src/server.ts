@@ -15,7 +15,12 @@ await app.register(cors, { origin: true });
 const store = createRuntimeStore();
 const model = createModelClient();
 const modelRouter = createComparisonModelRouter();
-const bot = env.TELEGRAM_BOT_TOKEN ? createReflectionBot(env.TELEGRAM_BOT_TOKEN, store, model, modelRouter) : null;
+const bot = env.TELEGRAM_BOT_TOKEN
+  ? createReflectionBot(env.TELEGRAM_BOT_TOKEN, store, model, modelRouter, {
+      responseDelaySeconds: env.BOT_RESPONSE_DELAY,
+      replySplitRate: env.BOT_REPLY_SPLIT_RATE
+    })
+  : null;
 
 app.get("/health", async () => {
   const storage = store.healthCheck ? await store.healthCheck() : { ok: true };
@@ -25,7 +30,9 @@ app.get("/health", async () => {
     storage: store.kind,
     supabase: storage,
     langwatchConfigured: Boolean(env.LANGWATCH_API_KEY),
-    modelConfigured: Boolean(model)
+    modelConfigured: Boolean(model),
+    botResponseDelaySeconds: env.BOT_RESPONSE_DELAY,
+    botReplySplitRate: env.BOT_REPLY_SPLIT_RATE
   };
 });
 

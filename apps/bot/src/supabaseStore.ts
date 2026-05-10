@@ -6,6 +6,8 @@ import {
   type ReflectionSession,
   type ReflectionStore,
   type ReflectionSummary,
+  type TelegramPendingBatch,
+  type TelegramPendingBatchMessage,
   type ReflectionTurn,
   type SafetyConcern,
   type StudentMemory,
@@ -115,6 +117,17 @@ export class SupabaseReflectionStore implements ReflectionStore {
 
     if (error) throw new Error(`Failed to create reflection: ${error.message}`);
     return mapReflection(data);
+  }
+
+  async getReflection(reflectionId: string): Promise<ReflectionSession | null> {
+    const { data, error } = await this.client
+      .from("reflections")
+      .select(reflectionSelect)
+      .eq("id", reflectionId)
+      .maybeSingle();
+
+    if (error) throw new Error(`Failed to load reflection: ${error.message}`);
+    return data ? mapReflection(data) : null;
   }
 
   async getLatestOpenReflection(studentId: string): Promise<ReflectionSession | null> {
@@ -256,6 +269,88 @@ export class SupabaseReflectionStore implements ReflectionStore {
 
     return null;
   }
+
+  async appendTelegramPendingBatch(input: {
+    studentId: string;
+    reflectionId: string;
+    telegramChatId?: string;
+    text: string;
+    receivedAt: string;
+    delaySeconds: number;
+    staleAfterSeconds: number;
+  }): Promise<TelegramPendingBatch> {
+    const { data, error } = await this.client.rpc("append_telegram_pending_batch", {
+      p_student_id: input.studentId,
+      p_reflection_id: input.reflectionId,
+      p_telegram_chat_id: input.telegramChatId ?? null,
+      p_text: input.text,
+      p_received_at: input.receivedAt,
+      p_delay_seconds: input.delaySeconds,
+      p_stale_after_seconds: input.staleAfterSeconds
+    });
+
+    if (error) throw new Error(`Failed to append Telegram pending batch: ${error.message}`);
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row) throw new Error("Failed to append Telegram pending batch: no row returned");
+    return mapTelegramPendingBatch(row as JsonRecord);
+  }
+
+  async claimReadyTelegramPendingBatches(input: {
+    readyAt: string;
+    now: string;
+    staleAfterSeconds: number;
+    processingLeaseSeconds: number;
+    limit: number;
+  }): Promise<TelegramPendingBatch[]> {
+    const { data, error } = await this.client.rpc("claim_ready_telegram_pending_batches", {
+      p_ready_at: input.readyAt,
+      p_now: input.now,
+      p_stale_after_seconds: input.staleAfterSeconds,
+      p_processing_lease_seconds: input.processingLeaseSeconds,
+      p_limit: input.limit
+    });
+
+    if (error) throw new Error(`Failed to claim Telegram pending batches: ${error.message}`);
+    return ((data ?? []) as JsonRecord[]).map(mapTelegramPendingBatch);
+  }
+
+  async markTelegramPendingBatchProcessed(batchId: string): Promise<void> {
+    const { error } = await this.client
+      .from("telegram_pending_batches")
+      .update({ status: "processed", processing_expires_at: null, updated_at: new Date().toISOString() })
+      .eq("id", batchId);
+
+    if (error) throw new Error(`Failed to mark Telegram pending batch processed: ${error.message}`);
+  }
+
+  async releaseTelegramPendingBatch(batchId: string, flushAfter: string): Promise<void> {
+    const { error } = await this.client
+      .from("telegram_pending_batches")
+      .update({ status: "pending", flush_after: flushAfter, processing_expires_at: null, updated_at: new Date().toISOString() })
+      .eq("id", batchId);
+
+    if (error) throw new Error(`Failed to release Telegram pending batch: ${error.message}`);
+  }
+
+  async cancelTelegramPendingBatch(input: {
+    studentId: string;
+    reflectionId: string;
+    reason: string;
+  }): Promise<void> {
+    const { error } = await this.client
+      .from("telegram_pending_batches")
+      .update({
+        status: "cancelled",
+        cancellation_reason: input.reason,
+        processing_expires_at: null,
+        updated_at: new Date().toISOString()
+      })
+      .eq("student_id", input.studentId)
+      .eq("reflection_id", input.reflectionId)
+      .in("status", ["pending", "processing"]);
+
+    if (error) throw new Error(`Failed to cancel Telegram pending batch: ${error.message}`);
+  }
 }
 
 const reflectionSelect =
@@ -279,6 +374,26 @@ function mapReflection(row: JsonRecord): ReflectionSession {
     status: row.status as ReflectionSession["status"],
     answers: (row.answers ?? {}) as ReflectionSession["answers"],
     safetyFlagged: Boolean(row.safety_flagged),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at)
+  };
+}
+
+function mapTelegramPendingBatch(row: JsonRecord): TelegramPendingBatch {
+  return {
+    id: String(row.id),
+    studentId: String(row.student_id),
+    reflectionId: String(row.reflection_id),
+    telegramChatId: row.telegram_chat_id ? String(row.telegram_chat_id) : undefined,
+    messages: Array.isArray(row.messages) ? (row.messages as TelegramPendingBatchMessage[]) : [],
+    messageCount: Number(row.message_count ?? 0),
+    firstMessageAt: String(row.first_message_at),
+    lastMessageAt: String(row.last_message_at),
+    flushAfter: String(row.flush_after),
+    status: row.status as TelegramPendingBatch["status"],
+    stale: Boolean(row.stale),
+    processingExpiresAt: row.processing_expires_at ? String(row.processing_expires_at) : undefined,
+    cancellationReason: row.cancellation_reason ? String(row.cancellation_reason) : undefined,
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at)
   };

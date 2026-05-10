@@ -31,9 +31,13 @@ npm run dev:dashboard
 
 Copy `.env.example` to `.env` and fill credentials before connecting Telegram, Supabase, or model-backed coaching.
 
+`BOT_RESPONSE_DELAY` controls the Telegram text debounce window in seconds. It defaults to `5`, accepts `0` through `30`, and `0` disables batching for immediate local testing.
+
+`BOT_REPLY_SPLIT_RATE` controls delivery-only Telegram reply splitting. It defaults to `0.2`, accepts `0` through `1`, and `0` disables splitting while keeping logical DB turns and LangWatch traces unchanged.
+
 ## Supabase
 
-The bot automatically uses Supabase when `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are present. Apply the SQL in `supabase/migrations/202605090001_initial_reflection_schema.sql` before starting the bot; otherwise `/health` will report that the app tables are missing.
+The bot automatically uses Supabase when `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are present. Apply the SQL in `supabase/migrations/` before starting the bot; otherwise `/health` will report that the app tables are missing.
 
 The local polling bot is useful for Telegram testing:
 

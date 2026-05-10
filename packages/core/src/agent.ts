@@ -1,4 +1,5 @@
 import { defaultPromptConfig, type PromptConfig } from "./config.js";
+import { countSemanticStageProbes, hasExactRecentBotReply } from "./conversationQuality.js";
 import { gibbsStageSchema, nextStage, stagePrompts, type GibbsStage } from "./gibbs.js";
 import type { ModelClient } from "./model.js";
 import { buildReflectionPrompt } from "./prompts.js";
@@ -34,6 +35,19 @@ export type AgentTurnOutput = {
   proposedMemoryUpdates: Array<{ kind: string; value: string; reason: string }>;
   safetyConcern: SafetyClassification;
   replyKind: "normal" | "safety_support" | "safety_followup";
+  diagnostics?: AgentTurnDiagnostics;
+};
+
+export type AgentTurnDiagnostics = {
+  replyGuard: {
+    exactRepeat: boolean;
+    action: "none" | "alternate_probe" | "stage_aligned_fallback" | "preserve_loop_repair";
+    originalReply?: string;
+  };
+  loop: {
+    semanticProbeCount: number;
+    semanticLoop: boolean;
+  };
 };
 
 export type StageSufficiency = {
@@ -108,6 +122,17 @@ export async function handleReflectionTurn(input: AgentTurnInput): Promise<Agent
   const lane = classifyMessageLane(input.studentMessage, stage, recentTurns);
   const safetyConcern = await classifySafety(input.studentMessage, input.model, lane);
   const promptText = buildReflectionPrompt({ config, profile: input.profile, memory, stage });
+  const buildDiagnostics = (replyGuard: AgentTurnDiagnostics["replyGuard"]): AgentTurnDiagnostics => ({
+    replyGuard,
+    loop: {
+      semanticProbeCount: countSemanticStageProbes(recentTurns, stage),
+      semanticLoop: countSemanticStageProbes(recentTurns, stage) >= 2
+    }
+  });
+  const noReplyGuard = (): AgentTurnDiagnostics["replyGuard"] => ({
+    exactRepeat: false,
+    action: "none"
+  });
 
   if (safetyConcern.category === "dangerous_instruction") {
     return {
@@ -121,7 +146,8 @@ export async function handleReflectionTurn(input: AgentTurnInput): Promise<Agent
       promptText,
       proposedMemoryUpdates: [],
       safetyConcern,
-      replyKind: "safety_followup"
+      replyKind: "safety_followup",
+      diagnostics: buildDiagnostics(noReplyGuard())
     };
   }
 
@@ -137,7 +163,8 @@ export async function handleReflectionTurn(input: AgentTurnInput): Promise<Agent
       promptText,
       proposedMemoryUpdates: [],
       safetyConcern,
-      replyKind: "safety_followup"
+      replyKind: "safety_followup",
+      diagnostics: buildDiagnostics(noReplyGuard())
     };
   }
 
@@ -168,7 +195,7 @@ export async function handleReflectionTurn(input: AgentTurnInput): Promise<Agent
         model: input.model,
         promptText
       });
-  const probeCount = countStageProbes(recentTurns, stage);
+  const probeCount = countSemanticStageProbes(recentTurns, stage);
   const loopRepair = !sufficiency.stageComplete && probeCount >= 2;
   const shouldMoveOn = turnDecision.shouldAdvance || sufficiency.stageComplete || loopRepair || hasMoveOnIntent;
   const forcedMove = loopRepair;
@@ -200,7 +227,7 @@ export async function handleReflectionTurn(input: AgentTurnInput): Promise<Agent
       recentTurns,
       lane
     });
-    const botMessage = await generateContextualReflectionReply({
+    const rawBotMessage = await generateContextualReflectionReply({
       model: input.model,
       promptText,
       stage,
@@ -212,14 +239,22 @@ export async function handleReflectionTurn(input: AgentTurnInput): Promise<Agent
       requiredQuestionIntent: requiredQuestionIntent(stage),
       lane
     });
+    const guardedReply = guardBotReply({
+      reply: rawBotMessage,
+      stage,
+      mode: "probe_current_stage",
+      studentMessage: input.studentMessage,
+      recentTurns
+    });
     return {
       session,
-      botMessage,
+      botMessage: guardedReply.reply,
       completed: false,
       promptText,
       proposedMemoryUpdates: [],
       safetyConcern,
-      replyKind: "normal"
+      replyKind: "normal",
+      diagnostics: buildDiagnostics(guardedReply.replyGuard)
     };
   }
 
@@ -238,7 +273,7 @@ export async function handleReflectionTurn(input: AgentTurnInput): Promise<Agent
               recentTurns
             })
           : forcedMoveMessage(stage, followingStage, sufficiency.stageComplete);
-    const botMessage = safetyConcern.hasConcern
+    const rawBotMessage = safetyConcern.hasConcern
       ? await generateAdaptiveReply({
           model: input.model,
           promptText,
@@ -262,27 +297,45 @@ export async function handleReflectionTurn(input: AgentTurnInput): Promise<Agent
           requiredQuestionIntent: requiredQuestionIntent(followingStage),
           lane
         });
+    const guardedReply = safetyConcern.hasConcern
+      ? { reply: rawBotMessage, replyGuard: noReplyGuard() }
+      : guardBotReply({
+          reply: rawBotMessage,
+          stage: followingStage,
+          mode: hasMoveOnIntent ? "skip_acknowledgement" : loopRepair ? "loop_repair" : "transition_to_next_stage",
+          studentMessage: input.studentMessage,
+          recentTurns
+        });
     return {
       session,
-      botMessage,
+      botMessage: guardedReply.reply,
       completed: false,
       promptText,
       proposedMemoryUpdates: [],
       safetyConcern,
-      replyKind: safetyConcern.hasConcern ? "safety_followup" : "normal"
+      replyKind: safetyConcern.hasConcern ? "safety_followup" : "normal",
+      diagnostics: buildDiagnostics(guardedReply.replyGuard)
     };
   }
 
   session.status = "completed";
   if (!isSummaryEligible(session.answers)) {
+    const guardedReply = guardBotReply({
+      reply: insufficientReflectionMessage,
+      stage,
+      mode: "transition_to_next_stage",
+      studentMessage: input.studentMessage,
+      recentTurns
+    });
     return {
       session,
-      botMessage: insufficientReflectionMessage,
+      botMessage: guardedReply.reply,
       completed: true,
       promptText,
       proposedMemoryUpdates: [],
       safetyConcern,
-      replyKind: "normal"
+      replyKind: "normal",
+      diagnostics: buildDiagnostics(guardedReply.replyGuard)
     };
   }
 
@@ -308,15 +361,25 @@ export async function handleReflectionTurn(input: AgentTurnInput): Promise<Agent
     promptVersionId: config.id
   };
 
+  const rawCompletionMessage = formatCompletionMessage(summary);
+  const guardedReply = guardBotReply({
+    reply: rawCompletionMessage,
+    stage,
+    mode: "transition_to_next_stage",
+    studentMessage: input.studentMessage,
+    recentTurns
+  });
+
   return {
     session,
-    botMessage: formatCompletionMessage(summary),
+    botMessage: guardedReply.reply,
     completed: true,
     promptText,
     summary,
     proposedMemoryUpdates: memoryResult.proposedUpdates,
     safetyConcern,
-    replyKind: "normal"
+    replyKind: "normal",
+    diagnostics: buildDiagnostics(guardedReply.replyGuard)
   };
 }
 
@@ -1011,6 +1074,84 @@ function formatProbeReply(input: {
   return `Got it. ${question}`;
 }
 
+function guardBotReply(input: {
+  reply: string;
+  stage: GibbsStage;
+  mode: ContextualReplyMode;
+  studentMessage: string;
+  recentTurns: ReflectionTurn[];
+}): { reply: string; replyGuard: AgentTurnDiagnostics["replyGuard"] } {
+  if (!hasExactRecentBotReply(input.reply, input.recentTurns)) {
+    return {
+      reply: input.reply,
+      replyGuard: {
+        exactRepeat: false,
+        action: "none"
+      }
+    };
+  }
+
+  if (input.mode === "loop_repair") {
+    return {
+      reply: input.reply,
+      replyGuard: {
+        exactRepeat: true,
+        action: "preserve_loop_repair",
+        originalReply: input.reply
+      }
+    };
+  }
+
+  const alternate = alternateReplyForExactRepeat(input.stage, input.mode, input.studentMessage, input.recentTurns);
+  return {
+    reply: alternate,
+    replyGuard: {
+      exactRepeat: true,
+      action: input.mode === "probe_current_stage" ? "alternate_probe" : "stage_aligned_fallback",
+      originalReply: input.reply
+    }
+  };
+}
+
+function alternateReplyForExactRepeat(
+  stage: GibbsStage,
+  mode: ContextualReplyMode,
+  studentMessage: string,
+  recentTurns: ReflectionTurn[]
+): string {
+  const candidates = mode === "probe_current_stage"
+    ? [
+        formatAlternateContextualProbe(stage, studentMessage, stageProbeQuestions[stage]),
+        ...alternateProbeQuestions[stage]
+      ]
+    : [`Moving forward: ${stagePrompts[stage]}`, stagePrompts[stage]];
+  return candidates.find((candidate) => !hasExactRecentBotReply(candidate, recentTurns)) ?? candidates[0] ?? stagePrompts[stage];
+}
+
+function formatAlternateContextualProbe(stage: GibbsStage, studentMessage: string, fallbackQuestion: string): string {
+  const detail = summarizeForProbe(studentMessage);
+  if (!detail) return `No stress. ${fallbackQuestion}`;
+
+  switch (stage) {
+    case "description":
+      return `About "${detail}": what actually happened in that moment?`;
+    case "people":
+      return `About "${detail}": who was part of it, even if it was mostly you?`;
+    case "feelings":
+      return `About "${detail}": what feeling or thought stood out most?`;
+    case "evaluation":
+      return `About "${detail}": was that something that went well, or something that did not?`;
+    case "analysis":
+      return `About "${detail}": what do you think made it turn out that way?`;
+    case "conclusion":
+      return `About "${detail}": what are you taking from this?`;
+    case "action_plan":
+      return `About "${detail}": what is one small next step you would take?`;
+    default:
+      return `No stress. ${fallbackQuestion}`;
+  }
+}
+
 function forcedMoveMessage(currentStage: GibbsStage, followingStage: GibbsStage, completed: boolean): string {
   if (completed) return stagePrompts[followingStage];
   return `No worries, we can keep moving. ${stagePrompts[followingStage]}`;
@@ -1484,6 +1625,37 @@ const stageProbeQuestions: Record<GibbsStage, string> = {
   analysis: "Why do you think it happened that way?",
   conclusion: "What is one thing you learned from it?",
   action_plan: "What is one small next step you want to take?"
+};
+
+const alternateProbeQuestions: Record<GibbsStage, string[]> = {
+  description: [
+    "Let's make it concrete: what event or situation do you want to reflect on?",
+    "What is the specific moment you want to look back on?"
+  ],
+  people: [
+    "Who was part of that moment, even if you mostly handled it alone?",
+    "Was anyone else involved or affected?"
+  ],
+  feelings: [
+    "What feeling stood out most during or after it?",
+    "What was the strongest thought or emotion you noticed?"
+  ],
+  evaluation: [
+    "What was one thing that worked, and one thing that was difficult?",
+    "Which part went well, and which part did not?"
+  ],
+  analysis: [
+    "Let's come at it another way: what do you think was the main cause?",
+    "What do you think led things to turn out that way?"
+  ],
+  conclusion: [
+    "What are you taking from this?",
+    "What is one lesson or takeaway from the experience?"
+  ],
+  action_plan: [
+    "What is one small next step you would take from here?",
+    "What would you try differently next time?"
+  ]
 };
 
 const initialStageEntryPrompts: Record<GibbsStage, string[]> = {

@@ -583,6 +583,74 @@ describe("modified Gibbs reflection agent", () => {
     expect(result.botMessage).not.toContain("That helps");
   });
 
+  it("replaces exact repeated normal probes without treating that as semantic loop repair", async () => {
+    const session = { ...createInitialReflection(profile.id), currentStage: "analysis" as const };
+    const repeatedProbe = "That helps. Why do you think it happened that way?";
+    const recentTurns = [
+      makeTurn("bot", "analysis", repeatedProbe)
+    ];
+
+    const result = await handleReflectionTurn({
+      profile,
+      session,
+      studentMessage: "idk",
+      recentTurns,
+      model: {
+        async generateJson(input) {
+          if (input.task === "stage_sufficiency") {
+            return {
+              stageComplete: false,
+              confidence: 0.9,
+              missing: ["cause"],
+              probeQuestion: "Why do you think it happened that way?",
+              reason: "Needs a cause."
+            } as never;
+          }
+          if (input.task === "contextual_reflection_reply") {
+            return {
+              reply: repeatedProbe,
+              referencedUserContext: false,
+              questionIntent: "ask why it happened that way",
+              reason: "Bad duplicate model reply."
+            } as never;
+          }
+          return input.fallback as never;
+        }
+      }
+    });
+
+    expect(result.session.currentStage).toBe("analysis");
+    expect(result.botMessage).not.toBe(repeatedProbe);
+    expect(result.botMessage).toContain("Why do you think it happened that way?");
+    expect(result.diagnostics?.replyGuard).toMatchObject({
+      exactRepeat: true,
+      action: "alternate_probe",
+      originalReply: repeatedProbe
+    });
+    expect(result.diagnostics?.loop.semanticProbeCount).toBe(1);
+    expect(result.diagnostics?.loop.semanticLoop).toBe(false);
+  });
+
+  it("does not rewrite fixed safety copy even if it appeared recently", async () => {
+    const session = createInitialReflection(profile.id);
+    const recentTurns = [
+      makeTurn("bot", "description", safetyPauseFollowupMessage)
+    ];
+
+    const result = await handleReflectionTurn({
+      profile,
+      session,
+      studentMessage: "I want to hurt myself",
+      recentTurns
+    });
+
+    expect(result.botMessage).toBe(safetyPauseFollowupMessage);
+    expect(result.diagnostics?.replyGuard).toMatchObject({
+      exactRepeat: false,
+      action: "none"
+    });
+  });
+
   it("does not repeat identical fallback text more than twice across a loop repair transcript", async () => {
     const session = { ...createInitialReflection(profile.id), currentStage: "analysis" as const };
     const repeatedProbe = "It sounds like time pressure was part of it. What do you think led to that?";

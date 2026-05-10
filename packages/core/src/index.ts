@@ -1,5 +1,6 @@
 export * from "./agent.js";
 export * from "./config.js";
+export * from "./conversationQuality.js";
 export * from "./gibbs.js";
 export * from "./model.js";
 export * from "./prompts.js";

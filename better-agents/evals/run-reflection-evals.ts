@@ -1,10 +1,11 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { LangWatch } from "langwatch";
+import { analyzeConversationQuality, countSemanticStageProbes, type ConversationQualityReport } from "../../packages/core/src/conversationQuality.js";
 import { defaultPromptConfig } from "../../packages/core/src/config.js";
 import { createInitialReflection, handleReflectionTurn, safetyPauseFollowupMessage } from "../../packages/core/src/agent.js";
 import type { ModelClient } from "../../packages/core/src/model.js";
-import type { GibbsStage } from "../../packages/core/src/gibbs.js";
+import { gibbsStages, type GibbsStage } from "../../packages/core/src/gibbs.js";
 import type { ReflectionSession, ReflectionTurn } from "../../packages/core/src/types.js";
 
 type EvalCase = {
@@ -12,6 +13,8 @@ type EvalCase = {
   description: string;
   messages: string[];
   model?: ModelClient;
+  allowExactBotReplyRepeats?: boolean;
+  expectsLoopRepair?: boolean;
   expectations: Array<(context: EvalContext) => EvalCheck>;
 };
 
@@ -20,6 +23,7 @@ type EvalContext = {
   replies: string[];
   botTurns: ReflectionTurn[];
   finalReply: string;
+  quality: ConversationQualityReport;
 };
 
 type EvalCheck = {
@@ -35,6 +39,134 @@ const profile = {
 };
 
 const evalCases: EvalCase[] = [
+  {
+    id: "analysis-exact-repeat-guard-screenshot",
+    description: "Screenshot-style analysis probe cannot repeat the same wording word for word.",
+    messages: [
+      "hackathon",
+      "just me",
+      "excited during and sad afterward",
+      "I enjoyed building with Codex but was sad about not being able to complete",
+      "i overscoped and planned too many features"
+    ],
+    model: {
+      async generateJson(input) {
+        if (input.task === "stage_sufficiency") {
+          const payload = JSON.parse(input.messages.at(-1)?.content ?? "{}") as {
+            currentStage?: string;
+          };
+          if (payload.currentStage === "analysis") {
+            return {
+              stageComplete: false,
+              confidence: 0.87,
+              missing: ["cause"],
+              probeQuestion: "Why do you think it happened that way?",
+              reason: "Force a repeated analysis probe for the screenshot regression."
+            } as never;
+          }
+        }
+        if (input.task === "contextual_reflection_reply") {
+          const payload = JSON.parse(input.messages.at(-1)?.content ?? "{}") as {
+            currentStage?: string;
+            fallbackIfUnsure?: string;
+          };
+          if (payload.currentStage === "analysis") {
+            return {
+              reply: "That helps. Why do you think it happened that way?",
+              referencedUserContext: false,
+              questionIntent: "ask why it happened that way",
+              reason: "Bad exact repeat."
+            } as never;
+          }
+          return {
+            reply: payload.fallbackIfUnsure ?? "What happened?",
+            referencedUserContext: false,
+            questionIntent: "stage aligned fallback",
+            reason: "Use fallback outside analysis."
+          } as never;
+        }
+        return input.fallback as never;
+      }
+    },
+    expectations: [
+      ({ replies }) => ({
+        name: "no-word-for-word-analysis-repeat",
+        passed: replies.filter((reply) => reply === "That helps. Why do you think it happened that way?").length <= 1,
+        details: replies.join(" | ")
+      }),
+      ({ finalReply }) => ({
+        name: "alternate-analysis-probe-used",
+        passed: finalReply.includes("overscoped") || finalReply.includes("main cause") || finalReply.includes("come at it another way"),
+        details: finalReply
+      })
+    ]
+  },
+  {
+    id: "rephrased-analysis-loop-still-repairs",
+    description: "Different analysis probe phrasings still count as a semantic stage loop and move forward.",
+    expectsLoopRepair: true,
+    messages: [
+      "hackathon",
+      "just me",
+      "rushed",
+      "I did not finish because I planned too many features",
+      "idk",
+      "not sure",
+      "still not sure"
+    ],
+    model: {
+      async generateJson(input) {
+        if (input.task === "stage_sufficiency") {
+          const payload = JSON.parse(input.messages.at(-1)?.content ?? "{}") as {
+            currentStage?: string;
+          };
+          if (payload.currentStage === "analysis") {
+            return {
+              stageComplete: false,
+              confidence: 0.88,
+              missing: ["cause"],
+              probeQuestion: "Why do you think it happened that way?",
+              reason: "Keep analysis incomplete until loop repair."
+            } as never;
+          }
+        }
+        if (input.task === "contextual_reflection_reply") {
+          const payload = JSON.parse(input.messages.at(-1)?.content ?? "{}") as {
+            currentStage?: string;
+            replyMode?: string;
+            fallbackIfUnsure?: string;
+          };
+          if (payload.replyMode === "probe_current_stage" && payload.currentStage === "analysis") {
+            return {
+              reply: "What do you think led things to turn out that way?",
+              referencedUserContext: true,
+              questionIntent: "ask why it happened that way",
+              reason: "Rephrased analysis probe."
+            } as never;
+          }
+          return {
+            reply: payload.fallbackIfUnsure ?? "I think we are looping, so I will move us forward. Next: What did you learn about yourself, others, or the situation?",
+            referencedUserContext: false,
+            questionIntent: "stage aligned fallback",
+            reason: "Use deterministic fallback for loop repair."
+          } as never;
+        }
+        return input.fallback as never;
+      }
+    },
+    expectations: [
+      ({ session }) => ({
+        name: "rephrased-loop-repaired",
+        passed: session.currentStage === "conclusion",
+        details: `Expected conclusion, got ${session.currentStage}.`
+      }),
+      ({ finalReply }) => ({
+        name: "semantic-loop-repair-copy",
+        passed: finalReply.includes("looping") || finalReply.includes("circling the same cause"),
+        details: finalReply
+      })
+    ]
+  },
   {
     id: "full-gibbs-cycle",
     description: "A complete reflection advances through every modified Gibbs stage and completes.",
@@ -486,6 +618,18 @@ const evalCases: EvalCase[] = [
           } as never;
         }
         if (input.task === "contextual_reflection_reply") {
+          const payload = JSON.parse(input.messages.at(-1)?.content ?? "{}") as {
+            studentMessage?: string;
+            fallbackIfUnsure?: string;
+          };
+          if (!payload.studentMessage?.includes("deadlines")) {
+            return {
+              reply: payload.fallbackIfUnsure ?? "What happened?",
+              referencedUserContext: false,
+              questionIntent: "stage aligned fallback",
+              reason: "Only contextualize the target deadline message."
+            } as never;
+          }
           return {
             reply: "Sounds like deadline pressure and leaving midway shaped the situation. What do you think led you to plan it that way?",
             referencedUserContext: true,
@@ -571,9 +715,9 @@ const evalCases: EvalCase[] = [
         passed: finalReply.includes("looping") && finalReply.includes("What did you learn"),
         details: finalReply
       }),
-      ({ replies }) => ({
+      ({ botTurns, replies }) => ({
         name: "no-third-analysis-probe",
-        passed: replies.filter((reply) => reply.startsWith("It sounds like time pressure")).length === 2,
+        passed: countSemanticStageProbes(botTurns, "analysis") === 2,
         details: replies.join(" | ")
       })
     ]
@@ -810,6 +954,18 @@ const evalCases: EvalCase[] = [
     model: {
       async generateJson(input) {
         if (input.task === "contextual_reflection_reply") {
+          const payload = JSON.parse(input.messages.at(-1)?.content ?? "{}") as {
+            currentStage?: string;
+            fallbackIfUnsure?: string;
+          };
+          if (payload.currentStage !== "analysis") {
+            return {
+              reply: payload.fallbackIfUnsure ?? "What happened?",
+              referencedUserContext: false,
+              questionIntent: "stage aligned fallback",
+              reason: "Only test balanced paraphrase on the analysis transition."
+            } as never;
+          }
           return {
             reply: "So the vibe worked, but submitting was the hard bit. Why do you think it played out that way?",
             referencedUserContext: true,
@@ -954,6 +1110,7 @@ type EvalResult = {
   finalStage: string;
   status: string;
   finalReply: string;
+  quality: ConversationQualityReport;
 };
 
 const results: EvalResult[] = [];
@@ -962,7 +1119,10 @@ const experiment = await initLangWatchExperiment();
 for (const evalCase of evalCases) {
   const runCase = async () => {
     const context = await runEvalCase(evalCase);
-    const checks = evalCase.expectations.map((expectation) => expectation(context));
+    const checks = [
+      ...evalCase.expectations.map((expectation) => expectation(context)),
+      ...conversationQualityChecks(evalCase, context)
+    ];
     const passed = checks.every((check) => check.passed);
     results.push({
       id: evalCase.id,
@@ -971,7 +1131,8 @@ for (const evalCase of evalCases) {
       checks,
       finalStage: context.session.currentStage,
       status: context.session.status,
-      finalReply: context.finalReply
+      finalReply: context.finalReply,
+      quality: context.quality
     });
     return { context, checks, passed };
   };
@@ -985,7 +1146,8 @@ for (const evalCase of evalCases) {
         passed,
         finalStage: context.session.currentStage,
         status: context.session.status,
-        checks
+        checks,
+        quality: context.quality
       });
 
       for (const check of checks) {
@@ -1069,8 +1231,34 @@ async function runEvalCase(evalCase: EvalCase): Promise<EvalContext> {
     session,
     replies,
     botTurns,
-    finalReply: replies.at(-1) ?? ""
+    finalReply: replies.at(-1) ?? "",
+    quality: analyzeConversationQuality(turns)
   };
+}
+
+function conversationQualityChecks(evalCase: EvalCase, context: EvalContext): EvalCheck[] {
+  const checks: EvalCheck[] = [
+    {
+      name: "no_exact_duplicate_bot_reply",
+      passed: evalCase.allowExactBotReplyRepeats === true || context.quality.exactReplyRepeatCount === 0,
+      details: JSON.stringify(context.quality.issues.filter((issue) => issue.type === "exact_reply_repeat"))
+    },
+    {
+      name: "bounded_same_stage_probes",
+      passed: Math.max(...gibbsStages.map((stage) => countSemanticStageProbes(context.botTurns, stage))) <= 2,
+      details: JSON.stringify(Object.fromEntries(gibbsStages.map((stage) => [stage, countSemanticStageProbes(context.botTurns, stage)])))
+    }
+  ];
+
+  if (evalCase.expectsLoopRepair) {
+    checks.push({
+      name: "loop_repair_triggered_when_expected",
+      passed: context.finalReply.includes("looping") || context.finalReply.includes("circling the same cause"),
+      details: context.finalReply
+    });
+  }
+
+  return checks;
 }
 
 function makeTurn(role: "student" | "bot", stage: GibbsStage, content: string): ReflectionTurn {
