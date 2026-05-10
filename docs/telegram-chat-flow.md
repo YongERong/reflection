@@ -130,6 +130,13 @@ flowchart TD
 - `BOT_REPLY_SPLIT_RATE` controls deterministic delivery splitting from `0` to `1`, defaults to `0.2`, and uses stable context-derived seeds so tests and replay behavior are reproducible.
 - Delivery splitting only happens at sentence boundaries and never applies to safety, summary/actionable, command, home, stale backlog, `/reflect`, `/continue`, `/model`, `/new`, or loop-repair replies.
 
+## Contributor Notes
+
+- Pending-batch schema and RPC signatures must be verified against the live Supabase project after deployment. The bot logs `Could not find the function public.claim_ready_telegram_pending_batches(...)` when code and remote RPC signatures drift.
+- If a Supabase migration has already been applied remotely, do not rely on editing that historical migration file. Add a follow-up migration and apply it through Supabase MCP.
+- Keep the worker's processing lease and in-process scheduler guard paired: the lease recovers after crashes, while the guard prevents overlapping flushes in one bot process.
+- Known follow-up: the worker should re-check live batch/reflection state before persisting and sending a claimed batch, so mid-flight safety or `/new` cancellation cannot be overwritten by an older normal reply.
+
 ## Main Trace Attributes
 
 - `reflection.stage`: stage before processing the student message.

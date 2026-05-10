@@ -15,6 +15,8 @@
 - Avoid phrase-based control gates such as relying on `Got it`, `No stress`, or `That helps`.
 - Safety pauses reflection and still creates admin-review records.
 - Update docs and eval expectations when behavior changes.
+- When app code changes Supabase RPC signatures, verify the live schema through Supabase MCP before assuming the migration is applied. If a migration was already applied remotely and then edited locally, create and apply a follow-up migration instead of relying on the changed historical file.
+- For durable Telegram pending batches, treat the Postgres lease as crash recovery and the bot-process scheduler guard as same-process overlap prevention. Do not remove one to fix issues with the other.
 - Do not commit local config, generated eval artifacts, or secrets.
 
 ## Skills

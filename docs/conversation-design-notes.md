@@ -45,10 +45,19 @@ contributors.
 - `npm run eval:bot-flow`: Telegram-level command and state routing, including home, `/new`, `/model`, and safety admin-review persistence.
 - LangWatch experiment links are printed by eval commands. Artifact JSON files are also written under `better-agents/evals/artifacts/`.
 
+## Development Lessons
+
+- Debounce, freshness, safety bypass, leases, and delivery splitting are separate concerns. Fixes should preserve those boundaries instead of collapsing them into one queue rule.
+- The pending-batch processing lease is a durability tool for process death. The same-process flush guard is a scheduling tool that prevents interval overlap while the lease is active.
+- Supabase RPC signatures are part of the runtime contract. When code starts calling a new RPC shape, verify the live project schema through Supabase MCP and add a forward migration if production already has an older migration version.
+- LangWatch and eval transcripts should continue to describe logical conversation turns. Telegram typing and split-message delivery are UX layers and should not rewrite the stored transcript.
+
 ## Current Known Friction
 
 - `/continue` replies with the raw stage prompt. It may feel like a reset after a contextual conversation.
 - Dangerous-instruction copy is safe but still jumps quickly back to the current stage prompt.
 - Safety-paused reflections keep `/model` blocked, which is correct for state consistency but may need gentler wording.
 - Some fallback phrases such as `Got the event` still exist as guardrails and can feel stiff when the composer output is rejected.
+- A claimed pending batch can still finish a normal reply if safety or `/new` cancels it while model work is in flight. A future fix should re-check live batch/reflection state before worker persistence and delivery.
+- A delayed stale-command collapse timer can still fire after a fresh command arrives in the same chat. A future fix should clear pending stale timers before executing fresh commands.
 - `TODO.md` is historical and contains items that have since been implemented. Treat tests and evals as the source of truth.
