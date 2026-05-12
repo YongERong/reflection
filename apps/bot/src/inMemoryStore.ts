@@ -3,6 +3,10 @@ import {
   createInitialReflection,
   defaultPromptConfig,
   type PromptConfig,
+  type GoogleCalendarAuthLink,
+  type GoogleCalendarConnection,
+  type GoogleCalendarEvent,
+  type GoogleCalendarEventStatus,
   type ReflectionSession,
   type ReflectionStore,
   type ReflectionSummary,
@@ -21,6 +25,9 @@ export class InMemoryReflectionStore implements ReflectionStore {
   private safetyConcerns: SafetyConcern[] = [];
   private turns: ReflectionTurn[] = [];
   private pendingTelegramBatches = new Map<string, TelegramPendingBatch>();
+  private googleAuthLinks = new Map<string, GoogleCalendarAuthLink & { tokenHash: string }>();
+  private googleConnections = new Map<string, GoogleCalendarConnection & { encryptedRefreshToken: string }>();
+  private googleEvents = new Map<string, GoogleCalendarEvent>();
   private config: PromptConfig = defaultPromptConfig;
 
   async getOrCreateStudent(input: { telegramUserId: string; displayName: string }): Promise<StudentProfile> {
@@ -277,6 +284,133 @@ export class InMemoryReflectionStore implements ReflectionStore {
   getTelegramPendingBatches(): TelegramPendingBatch[] {
     return [...this.pendingTelegramBatches.values()].map(cloneBatch);
   }
+
+  async createGoogleCalendarAuthLink(input: {
+    studentId: string;
+    telegramUserId: string;
+    telegramChatId?: string;
+    tokenHash: string;
+    state: string;
+    expiresAt: string;
+  }): Promise<GoogleCalendarAuthLink> {
+    const link = {
+      id: createId("google_calendar_auth_link"),
+      studentId: input.studentId,
+      telegramUserId: input.telegramUserId,
+      telegramChatId: input.telegramChatId,
+      tokenHash: input.tokenHash,
+      state: input.state,
+      expiresAt: input.expiresAt,
+      createdAt: new Date().toISOString()
+    };
+    this.googleAuthLinks.set(link.id, link);
+    return cloneGoogleCalendarAuthLink(link);
+  }
+
+  async getValidGoogleCalendarAuthLinkByTokenHash(input: {
+    tokenHash: string;
+    now: string;
+  }): Promise<GoogleCalendarAuthLink | null> {
+    const link = [...this.googleAuthLinks.values()].find((item) => item.tokenHash === input.tokenHash);
+    return link && !link.usedAt && link.expiresAt > input.now ? cloneGoogleCalendarAuthLink(link) : null;
+  }
+
+  async consumeGoogleCalendarAuthLinkByState(input: {
+    state: string;
+    now: string;
+    usedAt: string;
+  }): Promise<GoogleCalendarAuthLink | null> {
+    const link = [...this.googleAuthLinks.values()].find((item) => item.state === input.state);
+    if (!link || link.usedAt || link.expiresAt <= input.now) return null;
+    const consumed = { ...link, usedAt: input.usedAt };
+    this.googleAuthLinks.set(link.id, consumed);
+    return cloneGoogleCalendarAuthLink(consumed);
+  }
+
+  async getGoogleCalendarConnection(studentId: string): Promise<GoogleCalendarConnection | null> {
+    const connection = this.googleConnections.get(studentId);
+    return connection ? cloneGoogleCalendarConnection(connection) : null;
+  }
+
+  async saveGoogleCalendarConnection(input: {
+    studentId: string;
+    googleSub: string;
+    googleEmail: string;
+    scopes: string[];
+    encryptedRefreshToken: string;
+    calendarId: string;
+    connectedAt: string;
+  }): Promise<GoogleCalendarConnection> {
+    const connection = {
+      studentId: input.studentId,
+      googleSub: input.googleSub,
+      googleEmail: input.googleEmail,
+      scopes: [...input.scopes],
+      encryptedRefreshToken: input.encryptedRefreshToken,
+      calendarId: input.calendarId,
+      status: "active" as const,
+      connectedAt: input.connectedAt,
+      updatedAt: input.connectedAt
+    };
+    this.googleConnections.set(input.studentId, connection);
+    return cloneGoogleCalendarConnection(connection);
+  }
+
+  async getEncryptedGoogleCalendarRefreshToken(studentId: string): Promise<string | null> {
+    const connection = this.googleConnections.get(studentId);
+    return connection?.status === "active" ? connection.encryptedRefreshToken : null;
+  }
+
+  async markGoogleCalendarConnectionNeedsReauth(studentId: string): Promise<void> {
+    const connection = this.googleConnections.get(studentId);
+    if (!connection) return;
+    this.googleConnections.set(studentId, {
+      ...connection,
+      status: "needs_reauth",
+      updatedAt: new Date().toISOString()
+    });
+  }
+
+  async disconnectGoogleCalendarConnection(studentId: string): Promise<void> {
+    const connection = this.googleConnections.get(studentId);
+    if (!connection) return;
+    const now = new Date().toISOString();
+    this.googleConnections.set(studentId, {
+      ...connection,
+      encryptedRefreshToken: "",
+      status: "disconnected",
+      revokedAt: now,
+      updatedAt: now
+    });
+  }
+
+  async upsertGoogleCalendarEvent(input: {
+    studentId: string;
+    googleEventId: string;
+    calendarId: string;
+    sourceKind: string;
+    sourceId?: string;
+    lastSyncedPayload: Record<string, unknown>;
+    status: GoogleCalendarEventStatus;
+  }): Promise<GoogleCalendarEvent> {
+    const id = `${input.studentId}:${input.calendarId}:${input.googleEventId}`;
+    const existing = this.googleEvents.get(id);
+    const now = new Date().toISOString();
+    const event = {
+      id: existing?.id ?? createId("google_calendar_event"),
+      studentId: input.studentId,
+      googleEventId: input.googleEventId,
+      calendarId: input.calendarId,
+      sourceKind: input.sourceKind,
+      sourceId: input.sourceId,
+      lastSyncedPayload: { ...input.lastSyncedPayload },
+      status: input.status,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now
+    };
+    this.googleEvents.set(id, event);
+    return cloneGoogleCalendarEvent(event);
+  }
 }
 
 function addSeconds(iso: string, seconds: number): string {
@@ -291,5 +425,43 @@ function cloneBatch(batch: TelegramPendingBatch): TelegramPendingBatch {
   return {
     ...batch,
     messages: batch.messages.map((message) => ({ ...message }))
+  };
+}
+
+function cloneGoogleCalendarAuthLink(
+  link: GoogleCalendarAuthLink & { tokenHash?: string }
+): GoogleCalendarAuthLink {
+  return {
+    id: link.id,
+    studentId: link.studentId,
+    telegramUserId: link.telegramUserId,
+    telegramChatId: link.telegramChatId,
+    state: link.state,
+    expiresAt: link.expiresAt,
+    usedAt: link.usedAt,
+    createdAt: link.createdAt
+  };
+}
+
+function cloneGoogleCalendarConnection(
+  connection: GoogleCalendarConnection & { encryptedRefreshToken?: string }
+): GoogleCalendarConnection {
+  return {
+    studentId: connection.studentId,
+    googleSub: connection.googleSub,
+    googleEmail: connection.googleEmail,
+    scopes: [...connection.scopes],
+    calendarId: connection.calendarId,
+    status: connection.status,
+    connectedAt: connection.connectedAt,
+    updatedAt: connection.updatedAt,
+    revokedAt: connection.revokedAt
+  };
+}
+
+function cloneGoogleCalendarEvent(event: GoogleCalendarEvent): GoogleCalendarEvent {
+  return {
+    ...event,
+    lastSyncedPayload: { ...event.lastSyncedPayload }
   };
 }

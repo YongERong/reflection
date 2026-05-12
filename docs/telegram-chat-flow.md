@@ -41,6 +41,16 @@ flowchart TD
   CALLBACK -->|"No + valid model"| CALLBACK_SET["Save process-memory preference<br/>Reply: new reflections will use model"]
   CALLBACK -->|"No + invalid model"| CALLBACK_BAD["Reply: model unavailable"]
 
+  U -->|"/calendar"| CALENDAR{"Google Calendar configured?"}
+  CALENDAR -->|"No"| CALENDAR_OFF["Reply: linking is not configured"]
+  CALENDAR -->|"Yes"| CALENDAR_LINK["Create short-lived one-time link<br/>Reply with connect/reconnect button"]
+  CALENDAR_LINK --> OAUTH_CONNECT["GET /google-calendar/connect<br/>Validate token hash"]
+  OAUTH_CONNECT --> GOOGLE["Redirect to Google OAuth<br/>Calendar events scope + offline access"]
+  GOOGLE --> OAUTH_CALLBACK["GET /google-calendar/callback<br/>Verify state, exchange code,<br/>store encrypted refresh token"]
+  OAUTH_CALLBACK --> CALENDAR_DONE["Browser success page<br/>Telegram confirmation if chat id exists"]
+
+  U -->|"/disconnect_calendar"| CALENDAR_DISCONNECT["Mark connection disconnected<br/>Remove encrypted refresh token"]
+
   U -->|"Text message"| TEXT["Get or create student"]
   TEXT --> OPEN{"Open reflection exists?"}
   OPEN -->|"No"| HOME["Reply with home message<br/>No reflection created"]
@@ -112,6 +122,8 @@ flowchart TD
 - Free text in home never starts a reflection. The student must use `/reflect`.
 - `/new` discards open reflections and returns home; it does not immediately create a replacement reflection.
 - `/model` is available only when no reflection is open. Model assignment is fixed per reflection once it starts.
+- `/calendar` creates a short-lived one-time browser link for Google Calendar OAuth. The link binds the Telegram student profile to the Google callback through a stored token hash and state value; Google refresh tokens are encrypted before persistence.
+- `/disconnect_calendar` marks the student's Google Calendar connection disconnected and clears the stored encrypted refresh token.
 - Commands bypass the normal text debounce. Stale command bursts are collapsed so the bot does not replay a wall of old command replies after downtime.
 - Normal reflection text is debounced through `telegram_pending_batches` when `BOT_RESPONSE_DELAY` is greater than `0`. The default delay is `5` seconds, with supported values from `0` to `30`.
 - Buffered normal text starts a best-effort Telegram `typing` indicator immediately. The bot refreshes it about every 4 seconds while the batch is pending.
@@ -134,6 +146,7 @@ flowchart TD
 
 - Pending-batch schema and RPC signatures must be verified against the live Supabase project after deployment. The bot logs `Could not find the function public.claim_ready_telegram_pending_batches(...)` when code and remote RPC signatures drift.
 - If a Supabase migration has already been applied remotely, do not rely on editing that historical migration file. Add a follow-up migration and apply it through Supabase MCP.
+- Google Calendar linking requires Google OAuth env vars plus `PUBLIC_BASE_URL` matching the registered callback `/google-calendar/callback`. Calendar write access uses the narrow `calendar.events` scope by default.
 - Keep the worker's processing lease and in-process scheduler guard paired: the lease recovers after crashes, while the guard prevents overlapping flushes in one bot process.
 - Known follow-up: the worker should re-check live batch/reflection state before persisting and sending a claimed batch, so mid-flight safety or `/new` cancellation cannot be overwritten by an older normal reply.
 

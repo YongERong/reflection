@@ -2,6 +2,10 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import {
   createInitialReflection,
   defaultPromptConfig,
+  type GoogleCalendarAuthLink,
+  type GoogleCalendarConnection,
+  type GoogleCalendarEvent,
+  type GoogleCalendarEventStatus,
   type PromptConfig,
   type ReflectionSession,
   type ReflectionStore,
@@ -351,6 +355,171 @@ export class SupabaseReflectionStore implements ReflectionStore {
 
     if (error) throw new Error(`Failed to cancel Telegram pending batch: ${error.message}`);
   }
+
+  async createGoogleCalendarAuthLink(input: {
+    studentId: string;
+    telegramUserId: string;
+    telegramChatId?: string;
+    tokenHash: string;
+    state: string;
+    expiresAt: string;
+  }): Promise<GoogleCalendarAuthLink> {
+    const { data, error } = await this.client
+      .from("telegram_google_auth_links")
+      .insert({
+        student_id: input.studentId,
+        telegram_user_id: input.telegramUserId,
+        telegram_chat_id: input.telegramChatId ?? null,
+        token_hash: input.tokenHash,
+        state: input.state,
+        expires_at: input.expiresAt
+      })
+      .select("id, student_id, telegram_user_id, telegram_chat_id, state, expires_at, used_at, created_at")
+      .single();
+
+    if (error) throw new Error(`Failed to create Google Calendar auth link: ${error.message}`);
+    return mapGoogleCalendarAuthLink(data);
+  }
+
+  async getValidGoogleCalendarAuthLinkByTokenHash(input: {
+    tokenHash: string;
+    now: string;
+  }): Promise<GoogleCalendarAuthLink | null> {
+    const { data, error } = await this.client
+      .from("telegram_google_auth_links")
+      .select("id, student_id, telegram_user_id, telegram_chat_id, state, expires_at, used_at, created_at")
+      .eq("token_hash", input.tokenHash)
+      .is("used_at", null)
+      .gt("expires_at", input.now)
+      .maybeSingle();
+
+    if (error) throw new Error(`Failed to load Google Calendar auth link: ${error.message}`);
+    return data ? mapGoogleCalendarAuthLink(data) : null;
+  }
+
+  async consumeGoogleCalendarAuthLinkByState(input: {
+    state: string;
+    now: string;
+    usedAt: string;
+  }): Promise<GoogleCalendarAuthLink | null> {
+    const { data, error } = await this.client
+      .from("telegram_google_auth_links")
+      .update({ used_at: input.usedAt })
+      .eq("state", input.state)
+      .is("used_at", null)
+      .gt("expires_at", input.now)
+      .select("id, student_id, telegram_user_id, telegram_chat_id, state, expires_at, used_at, created_at")
+      .maybeSingle();
+
+    if (error) throw new Error(`Failed to consume Google Calendar auth link: ${error.message}`);
+    return data ? mapGoogleCalendarAuthLink(data) : null;
+  }
+
+  async getGoogleCalendarConnection(studentId: string): Promise<GoogleCalendarConnection | null> {
+    const { data, error } = await this.client
+      .from("student_google_calendar_connections")
+      .select("student_id, google_sub, google_email, scopes, calendar_id, status, connected_at, updated_at, revoked_at")
+      .eq("student_id", studentId)
+      .maybeSingle();
+
+    if (error) throw new Error(`Failed to load Google Calendar connection: ${error.message}`);
+    return data ? mapGoogleCalendarConnection(data) : null;
+  }
+
+  async saveGoogleCalendarConnection(input: {
+    studentId: string;
+    googleSub: string;
+    googleEmail: string;
+    scopes: string[];
+    encryptedRefreshToken: string;
+    calendarId: string;
+    connectedAt: string;
+  }): Promise<GoogleCalendarConnection> {
+    const { data, error } = await this.client
+      .from("student_google_calendar_connections")
+      .upsert({
+        student_id: input.studentId,
+        google_sub: input.googleSub,
+        google_email: input.googleEmail,
+        scopes: input.scopes,
+        encrypted_refresh_token: input.encryptedRefreshToken,
+        calendar_id: input.calendarId,
+        status: "active",
+        connected_at: input.connectedAt,
+        revoked_at: null,
+        updated_at: input.connectedAt
+      })
+      .select("student_id, google_sub, google_email, scopes, calendar_id, status, connected_at, updated_at, revoked_at")
+      .single();
+
+    if (error) throw new Error(`Failed to save Google Calendar connection: ${error.message}`);
+    return mapGoogleCalendarConnection(data);
+  }
+
+  async getEncryptedGoogleCalendarRefreshToken(studentId: string): Promise<string | null> {
+    const { data, error } = await this.client
+      .from("student_google_calendar_connections")
+      .select("encrypted_refresh_token")
+      .eq("student_id", studentId)
+      .eq("status", "active")
+      .maybeSingle();
+
+    if (error) throw new Error(`Failed to load Google Calendar refresh token: ${error.message}`);
+    return data?.encrypted_refresh_token ? String(data.encrypted_refresh_token) : null;
+  }
+
+  async markGoogleCalendarConnectionNeedsReauth(studentId: string): Promise<void> {
+    const { error } = await this.client
+      .from("student_google_calendar_connections")
+      .update({ status: "needs_reauth", updated_at: new Date().toISOString() })
+      .eq("student_id", studentId);
+
+    if (error) throw new Error(`Failed to mark Google Calendar connection for reauth: ${error.message}`);
+  }
+
+  async disconnectGoogleCalendarConnection(studentId: string): Promise<void> {
+    const now = new Date().toISOString();
+    const { error } = await this.client
+      .from("student_google_calendar_connections")
+      .update({
+        encrypted_refresh_token: null,
+        status: "disconnected",
+        revoked_at: now,
+        updated_at: now
+      })
+      .eq("student_id", studentId);
+
+    if (error) throw new Error(`Failed to disconnect Google Calendar: ${error.message}`);
+  }
+
+  async upsertGoogleCalendarEvent(input: {
+    studentId: string;
+    googleEventId: string;
+    calendarId: string;
+    sourceKind: string;
+    sourceId?: string;
+    lastSyncedPayload: Record<string, unknown>;
+    status: GoogleCalendarEventStatus;
+  }): Promise<GoogleCalendarEvent> {
+    const now = new Date().toISOString();
+    const { data, error } = await this.client
+      .from("student_calendar_events")
+      .upsert({
+        student_id: input.studentId,
+        google_event_id: input.googleEventId,
+        calendar_id: input.calendarId,
+        source_kind: input.sourceKind,
+        source_id: input.sourceId ?? null,
+        last_synced_payload: input.lastSyncedPayload,
+        status: input.status,
+        updated_at: now
+      }, { onConflict: "student_id,calendar_id,google_event_id" })
+      .select("id, student_id, google_event_id, calendar_id, source_kind, source_id, last_synced_payload, status, created_at, updated_at")
+      .single();
+
+    if (error) throw new Error(`Failed to save Google Calendar event mapping: ${error.message}`);
+    return mapGoogleCalendarEvent(data);
+  }
 }
 
 const reflectionSelect =
@@ -394,6 +563,48 @@ function mapTelegramPendingBatch(row: JsonRecord): TelegramPendingBatch {
     stale: Boolean(row.stale),
     processingExpiresAt: row.processing_expires_at ? String(row.processing_expires_at) : undefined,
     cancellationReason: row.cancellation_reason ? String(row.cancellation_reason) : undefined,
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at)
+  };
+}
+
+function mapGoogleCalendarAuthLink(row: JsonRecord): GoogleCalendarAuthLink {
+  return {
+    id: String(row.id),
+    studentId: String(row.student_id),
+    telegramUserId: String(row.telegram_user_id),
+    telegramChatId: row.telegram_chat_id ? String(row.telegram_chat_id) : undefined,
+    state: String(row.state),
+    expiresAt: String(row.expires_at),
+    usedAt: row.used_at ? String(row.used_at) : undefined,
+    createdAt: String(row.created_at)
+  };
+}
+
+function mapGoogleCalendarConnection(row: JsonRecord): GoogleCalendarConnection {
+  return {
+    studentId: String(row.student_id),
+    googleSub: String(row.google_sub),
+    googleEmail: String(row.google_email),
+    scopes: Array.isArray(row.scopes) ? row.scopes.map(String) : [],
+    calendarId: String(row.calendar_id),
+    status: row.status as GoogleCalendarConnection["status"],
+    connectedAt: String(row.connected_at),
+    updatedAt: String(row.updated_at),
+    revokedAt: row.revoked_at ? String(row.revoked_at) : undefined
+  };
+}
+
+function mapGoogleCalendarEvent(row: JsonRecord): GoogleCalendarEvent {
+  return {
+    id: String(row.id),
+    studentId: String(row.student_id),
+    googleEventId: String(row.google_event_id),
+    calendarId: String(row.calendar_id),
+    sourceKind: String(row.source_kind),
+    sourceId: row.source_id ? String(row.source_id) : undefined,
+    lastSyncedPayload: (row.last_synced_payload ?? {}) as Record<string, unknown>,
+    status: row.status as GoogleCalendarEvent["status"],
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at)
   };

@@ -18,6 +18,8 @@ contributors.
 - `/reflect` is the explicit entry point into a reflection.
 - `/new` abandons open reflections and returns home. This keeps model switching and restarts clear.
 - `/model` is a testing harness, not a student-facing coaching feature. Preferences are process-memory only, and the assignment is fixed for a whole reflection.
+- `/calendar` starts a browser-based Google OAuth handoff using a short-lived one-time link tied to the Telegram student profile. Telegram identifies the local student record, but Google only becomes connected after the callback returns with the matching state.
+- `/disconnect_calendar` removes stored Google Calendar access for the student. Calendar refresh tokens are app-encrypted before persistence, and reconnect is required when Google returns token-refresh failures.
 - Normal Telegram reflection text is buffered briefly so double/triple texts can be processed as one coherent turn. `BOT_RESPONSE_DELAY` defaults to 5 seconds and supports 0-30 seconds; 0 keeps immediate processing. The worker also waits a short grace after the flush time before claiming a batch to avoid edge-of-window double prompts, runs only one flush at a time per bot process, and uses a 60-second processing lease so process crashes do not strand batches in `processing`.
 - While normal text is buffered, the bot sends and refreshes Telegram `typing` actions as immediate feedback. Follow-up texts briefly pause the refresh before resuming, which makes the debounce feel like the bot is revising instead of ignoring the user.
 - Deterministic code owns batching, freshness checks, stale command collapse, and safety bypass. The LLM only receives safe combined turns after the debounce worker flushes them.
@@ -50,6 +52,7 @@ contributors.
 - Debounce, freshness, safety bypass, leases, and delivery splitting are separate concerns. Fixes should preserve those boundaries instead of collapsing them into one queue rule.
 - The pending-batch processing lease is a durability tool for process death. The same-process flush guard is a scheduling tool that prevents interval overlap while the lease is active.
 - Supabase RPC signatures are part of the runtime contract. When code starts calling a new RPC shape, verify the live project schema through Supabase MCP and add a forward migration if production already has an older migration version.
+- Google Calendar linking depends on `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_TOKEN_ENCRYPTION_KEY`. Keep the OAuth redirect URI aligned with `PUBLIC_BASE_URL`; in development, Google OAuth test-mode refresh tokens for calendar scopes expire after 7 days.
 - LangWatch and eval transcripts should continue to describe logical conversation turns. Telegram typing and split-message delivery are UX layers and should not rewrite the stored transcript.
 
 ## Current Known Friction

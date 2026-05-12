@@ -33,6 +33,46 @@ export type TelegramPendingBatch = {
   updatedAt: string;
 };
 
+export type GoogleCalendarAuthLink = {
+  id: string;
+  studentId: string;
+  telegramUserId: string;
+  telegramChatId?: string;
+  state: string;
+  expiresAt: string;
+  usedAt?: string;
+  createdAt: string;
+};
+
+export type GoogleCalendarConnectionStatus = "active" | "needs_reauth" | "disconnected";
+
+export type GoogleCalendarConnection = {
+  studentId: string;
+  googleSub: string;
+  googleEmail: string;
+  scopes: string[];
+  calendarId: string;
+  status: GoogleCalendarConnectionStatus;
+  connectedAt: string;
+  updatedAt: string;
+  revokedAt?: string;
+};
+
+export type GoogleCalendarEventStatus = "active" | "cancelled" | "sync_failed";
+
+export type GoogleCalendarEvent = {
+  id: string;
+  studentId: string;
+  googleEventId: string;
+  calendarId: string;
+  sourceKind: string;
+  sourceId?: string;
+  lastSyncedPayload: Record<string, unknown>;
+  status: GoogleCalendarEventStatus;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type ReflectionStore = {
   getOrCreateStudent(input: { telegramUserId: string; displayName: string }): Promise<StudentProfile>;
   getMemory(studentId: string): Promise<StudentMemory>;
@@ -71,6 +111,45 @@ export type ReflectionStore = {
     reflectionId: string;
     reason: string;
   }): Promise<void>;
+  createGoogleCalendarAuthLink(input: {
+    studentId: string;
+    telegramUserId: string;
+    telegramChatId?: string;
+    tokenHash: string;
+    state: string;
+    expiresAt: string;
+  }): Promise<GoogleCalendarAuthLink>;
+  getValidGoogleCalendarAuthLinkByTokenHash(input: {
+    tokenHash: string;
+    now: string;
+  }): Promise<GoogleCalendarAuthLink | null>;
+  consumeGoogleCalendarAuthLinkByState(input: {
+    state: string;
+    now: string;
+    usedAt: string;
+  }): Promise<GoogleCalendarAuthLink | null>;
+  getGoogleCalendarConnection(studentId: string): Promise<GoogleCalendarConnection | null>;
+  saveGoogleCalendarConnection(input: {
+    studentId: string;
+    googleSub: string;
+    googleEmail: string;
+    scopes: string[];
+    encryptedRefreshToken: string;
+    calendarId: string;
+    connectedAt: string;
+  }): Promise<GoogleCalendarConnection>;
+  getEncryptedGoogleCalendarRefreshToken(studentId: string): Promise<string | null>;
+  markGoogleCalendarConnectionNeedsReauth(studentId: string): Promise<void>;
+  disconnectGoogleCalendarConnection(studentId: string): Promise<void>;
+  upsertGoogleCalendarEvent(input: {
+    studentId: string;
+    googleEventId: string;
+    calendarId: string;
+    sourceKind: string;
+    sourceId?: string;
+    lastSyncedPayload: Record<string, unknown>;
+    status: GoogleCalendarEventStatus;
+  }): Promise<GoogleCalendarEvent>;
 };
 
 export function createId(prefix: string): string {

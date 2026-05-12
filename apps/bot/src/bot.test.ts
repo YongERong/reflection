@@ -2,11 +2,15 @@ import { describe, expect, it, vi } from "vitest";
 import { createId, createInitialReflection, fixedSafetySupportMessage, safetyPauseFollowupMessage, stagePrompts } from "@reflection/core";
 import {
   buildReflectionReplies,
+  calendarDisconnectedMessage,
+  calendarNotConfiguredMessage,
   createTelegramBatchFlushScheduler,
   createStaleCommandCollapser,
   defaultBatchProcessingLeaseSeconds,
   discardedReflectionMessage,
   flushReadyTelegramBatches,
+  handleCalendarCommand,
+  handleDisconnectCalendarCommand,
   handleIncomingReflectionText,
   handleModelCommand,
   handleModelSelectionCallback,
@@ -327,6 +331,150 @@ describe("Telegram model picker", () => {
       "reflection.model.assignment_source": "manual",
       "reflection.model.comparison_group": "in_situ_manual"
     });
+  });
+});
+
+describe("Telegram Google Calendar linking", () => {
+  it("/calendar says linking is unavailable when Google is not configured", async () => {
+    const store = new InMemoryReflectionStore();
+    const student = await store.getOrCreateStudent({
+      telegramUserId: "tg_calendar_unconfigured",
+      displayName: "Asha"
+    });
+
+    const response = await handleCalendarCommand({
+      store,
+      student,
+      telegramChatId: "chat-calendar",
+      publicBaseUrl: "https://bot.example.com",
+      enabled: false
+    });
+
+    expect(response).toEqual({ text: calendarNotConfiguredMessage });
+  });
+
+  it("/calendar creates a short-lived one-time Google connect link", async () => {
+    const store = new InMemoryReflectionStore();
+    const student = await store.getOrCreateStudent({
+      telegramUserId: "tg_calendar_link",
+      displayName: "Ben"
+    });
+    const now = new Date("2026-05-11T01:00:00.000Z");
+
+    const response = await handleCalendarCommand({
+      store,
+      student,
+      telegramChatId: "chat-calendar",
+      publicBaseUrl: "https://bot.example.com",
+      enabled: true,
+      now: () => now
+    });
+    const button = response.replyMarkup?.inline_keyboard[0]?.[0] as { url?: string } | undefined;
+    const url = button?.url;
+    const token = url ? new URL(url).searchParams.get("token") : null;
+    const link = token
+      ? await store.getValidGoogleCalendarAuthLinkByTokenHash({
+          tokenHash: (await import("./tokenCrypto.js")).sha256Hex(token),
+          now: "2026-05-11T01:01:00.000Z"
+        })
+      : null;
+
+    expect(response.text).toContain("Connect Google Calendar");
+    expect(url).toMatch(/^https:\/\/bot\.example\.com\/google-calendar\/connect\?token=/);
+    expect(link).toMatchObject({
+      studentId: student.id,
+      telegramUserId: "tg_calendar_link",
+      telegramChatId: "chat-calendar",
+      expiresAt: "2026-05-11T01:10:00.000Z"
+    });
+  });
+
+  it("consumes Google Calendar auth states exactly once", async () => {
+    const store = new InMemoryReflectionStore();
+    const student = await store.getOrCreateStudent({
+      telegramUserId: "tg_calendar_consume",
+      displayName: "Bea"
+    });
+    const created = await store.createGoogleCalendarAuthLink({
+      studentId: student.id,
+      telegramUserId: "tg_calendar_consume",
+      telegramChatId: "chat-calendar",
+      tokenHash: "token-hash",
+      state: "state-token",
+      expiresAt: "2026-05-11T01:10:00.000Z"
+    });
+
+    const consumed = await store.consumeGoogleCalendarAuthLinkByState({
+      state: created.state,
+      now: "2026-05-11T01:01:00.000Z",
+      usedAt: "2026-05-11T01:01:00.000Z"
+    });
+    const secondConsume = await store.consumeGoogleCalendarAuthLinkByState({
+      state: created.state,
+      now: "2026-05-11T01:01:01.000Z",
+      usedAt: "2026-05-11T01:01:01.000Z"
+    });
+
+    expect(consumed).toMatchObject({
+      id: created.id,
+      usedAt: "2026-05-11T01:01:00.000Z"
+    });
+    expect(secondConsume).toBeNull();
+  });
+
+  it("/calendar shows connected account and reconnect option", async () => {
+    const store = new InMemoryReflectionStore();
+    const student = await store.getOrCreateStudent({
+      telegramUserId: "tg_calendar_connected",
+      displayName: "Chloe"
+    });
+    await store.saveGoogleCalendarConnection({
+      studentId: student.id,
+      googleSub: "google-sub",
+      googleEmail: "chloe@example.com",
+      scopes: ["https://www.googleapis.com/auth/calendar.events"],
+      encryptedRefreshToken: "encrypted",
+      calendarId: "primary",
+      connectedAt: "2026-05-11T01:00:00.000Z"
+    });
+
+    const response = await handleCalendarCommand({
+      store,
+      student,
+      telegramChatId: "chat-calendar",
+      publicBaseUrl: "https://bot.example.com",
+      enabled: true
+    });
+
+    expect(response.text).toContain("chloe@example.com");
+    const button = response.replyMarkup?.inline_keyboard[0]?.[0] as { text?: string } | undefined;
+    expect(button?.text).toBe("Reconnect Google Calendar");
+  });
+
+  it("/disconnect_calendar marks the connection disconnected", async () => {
+    const store = new InMemoryReflectionStore();
+    const student = await store.getOrCreateStudent({
+      telegramUserId: "tg_calendar_disconnect",
+      displayName: "Devi"
+    });
+    await store.saveGoogleCalendarConnection({
+      studentId: student.id,
+      googleSub: "google-sub",
+      googleEmail: "devi@example.com",
+      scopes: ["https://www.googleapis.com/auth/calendar.events"],
+      encryptedRefreshToken: "encrypted",
+      calendarId: "primary",
+      connectedAt: "2026-05-11T01:00:00.000Z"
+    });
+
+    const response = await handleDisconnectCalendarCommand({ store, student });
+
+    expect(response).toBe(calendarDisconnectedMessage);
+    expect(await store.getGoogleCalendarConnection(student.id)).toMatchObject({
+      status: "disconnected",
+      revokedAt: expect.any(String)
+    });
+    expect(await store.getEncryptedGoogleCalendarRefreshToken(student.id)).toBeNull();
   });
 });
 

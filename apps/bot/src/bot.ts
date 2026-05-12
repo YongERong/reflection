@@ -15,6 +15,7 @@ import {
   type StudentProfile
 } from "@reflection/core";
 import { captureTraceInput, captureTraceOutput, getBotTracer } from "./observability.js";
+import { createSecretToken, sha256Hex } from "./tokenCrypto.js";
 import {
   comparisonModelNames,
   createModelRouter,
@@ -32,8 +33,13 @@ export const discardedReflectionMessage =
   "Discarded that reflection. Send /reflect to start again, or /model to choose the model.";
 export const staleBacklogMessage =
   "Sorry, I was away for a bit. I saw your messages, but I do not want to treat an old backlog like a live conversation. Send one fresh message when you are ready to continue.";
+export const calendarNotConfiguredMessage =
+  "Google Calendar linking is not configured yet.";
+export const calendarDisconnectedMessage =
+  "Disconnected Google Calendar. Send /calendar when you want to connect it again.";
 
 const staleAfterSeconds = 15 * 60;
+const calendarAuthLinkTtlMs = 10 * 60 * 1000;
 const defaultWorkerIntervalMs = 1000;
 const defaultTypingRefreshMs = 4000;
 const defaultTypingRevisionPauseMs = 2000;
@@ -44,6 +50,10 @@ export const defaultBatchProcessingLeaseSeconds = 60;
 export type ReflectionBotOptions = {
   responseDelaySeconds?: number;
   replySplitRate?: number;
+  googleCalendar?: {
+    enabled: boolean;
+    publicBaseUrl: string;
+  };
   workerIntervalMs?: number;
   batchClaimGraceMs?: number;
   typingIndicatorManager?: TypingIndicatorManager;
@@ -280,6 +290,24 @@ export function createReflectionBot(
     const student = await getStudent(ctx, store);
     const response = await handleModelCommand({ store, student, modelRouter });
     await ctx.reply(response.text, response.replyMarkup ? { reply_markup: response.replyMarkup } : undefined);
+  }));
+
+  bot.command("calendar", async (ctx) => runCommand(ctx, staleCommandCollapser, async () => {
+    const student = await getStudent(ctx, store);
+    const response = await handleCalendarCommand({
+      store,
+      student,
+      telegramChatId: String(ctx.chat?.id ?? student.telegramUserId ?? student.id),
+      publicBaseUrl: options.googleCalendar?.publicBaseUrl ?? "",
+      enabled: options.googleCalendar?.enabled === true
+    });
+    await ctx.reply(response.text, response.replyMarkup ? { reply_markup: response.replyMarkup } : undefined);
+  }));
+
+  bot.command("disconnect_calendar", async (ctx) => runCommand(ctx, staleCommandCollapser, async () => {
+    const student = await getStudent(ctx, store);
+    const response = await handleDisconnectCalendarCommand({ store, student });
+    await ctx.reply(response);
   }));
 
   bot.callbackQuery(/^model:/, async (ctx) => {
@@ -535,6 +563,69 @@ export async function handleModelSelectionCallback(input: {
     text: `New reflections will use ${modelName}.`,
     callbackText: `New reflections will use ${modelName}`
   };
+}
+
+export async function handleCalendarCommand(input: {
+  store: ReflectionStore;
+  student: StudentProfile;
+  telegramChatId?: string;
+  publicBaseUrl: string;
+  enabled: boolean;
+  now?: () => Date;
+}): Promise<{ text: string; replyMarkup?: InlineKeyboard }> {
+  if (!input.enabled || !input.publicBaseUrl) {
+    return { text: calendarNotConfiguredMessage };
+  }
+
+  const telegramUserId = input.student.telegramUserId ?? input.student.id;
+  const token = createSecretToken();
+  const state = createSecretToken();
+  const now = input.now?.() ?? new Date();
+  const expiresAt = new Date(now.getTime() + calendarAuthLinkTtlMs).toISOString();
+  const connection = await input.store.getGoogleCalendarConnection(input.student.id);
+
+  await input.store.createGoogleCalendarAuthLink({
+    studentId: input.student.id,
+    telegramUserId,
+    telegramChatId: input.telegramChatId,
+    tokenHash: sha256Hex(token),
+    state,
+    expiresAt
+  });
+
+  const connectUrl = new URL("/google-calendar/connect", input.publicBaseUrl);
+  connectUrl.searchParams.set("token", token);
+  const keyboard = new InlineKeyboard().url(
+    connection?.status === "active" ? "Reconnect Google Calendar" : "Connect Google Calendar",
+    connectUrl.toString()
+  );
+
+  if (connection?.status === "active") {
+    return {
+      text: `Google Calendar is connected as ${connection.googleEmail}. Use the button to reconnect or update permissions. Send /disconnect_calendar to remove access.`,
+      replyMarkup: keyboard
+    };
+  }
+
+  if (connection?.status === "needs_reauth") {
+    return {
+      text: "Google Calendar needs to be reconnected before I can add or edit events.",
+      replyMarkup: keyboard
+    };
+  }
+
+  return {
+    text: "Connect Google Calendar so I can add and edit reflection events for you.",
+    replyMarkup: keyboard
+  };
+}
+
+export async function handleDisconnectCalendarCommand(input: {
+  store: ReflectionStore;
+  student: StudentProfile;
+}): Promise<string> {
+  await input.store.disconnectGoogleCalendarConnection(input.student.id);
+  return calendarDisconnectedMessage;
 }
 
 export async function handleStudentReflectionMessage(input: {
