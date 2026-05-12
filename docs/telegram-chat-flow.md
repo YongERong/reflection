@@ -122,7 +122,10 @@ flowchart TD
 - Free text in home never starts a reflection. The student must use `/reflect`.
 - `/new` discards open reflections and returns home; it does not immediately create a replacement reflection.
 - `/model` is available only when no reflection is open. Model assignment is fixed per reflection once it starts.
-- `/calendar` creates a short-lived one-time browser link for Google Calendar OAuth. The link binds the Telegram student profile to the Google callback through a stored token hash and state value; Google refresh tokens are encrypted before persistence.
+- `/calendar` starts Google Calendar account linking for the Telegram student. The bot creates a short-lived one-time OAuth link, stores only a hash of the link token, and binds the Google callback through OAuth `state`.
+- Google Calendar linking requests offline access for Calendar event creation/editing. The stored refresh token is encrypted before persistence and is associated with the student's `student_profiles.id`.
+- `/calendar` shows the current Calendar connection state: no connection creates a connect link, an active connection creates a reconnect/update-permissions link, and `needs_reauth` asks the student to reconnect.
+- Telegram inline keyboard buttons are used only for HTTPS OAuth URLs. For local HTTP URLs such as `http://localhost:8787`, the bot sends the OAuth URL as plain text because Telegram rejects localhost URLs in inline buttons.
 - `/disconnect_calendar` marks the student's Google Calendar connection disconnected and clears the stored encrypted refresh token.
 - Commands bypass the normal text debounce. Stale command bursts are collapsed so the bot does not replay a wall of old command replies after downtime.
 - Normal reflection text is debounced through `telegram_pending_batches` when `BOT_RESPONSE_DELAY` is greater than `0`. The default delay is `5` seconds, with supported values from `0` to `30`.
@@ -144,9 +147,7 @@ flowchart TD
 
 ## Contributor Notes
 
-- Pending-batch schema and RPC signatures must be verified against the live Supabase project after deployment. The bot logs `Could not find the function public.claim_ready_telegram_pending_batches(...)` when code and remote RPC signatures drift.
-- If a Supabase migration has already been applied remotely, do not rely on editing that historical migration file. Add a follow-up migration and apply it through Supabase MCP.
-- Google Calendar linking requires Google OAuth env vars plus `PUBLIC_BASE_URL` matching the registered callback `/google-calendar/callback`. Calendar write access uses the narrow `calendar.events` scope by default.
+- Google Calendar linking requires `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_TOKEN_ENCRYPTION_KEY`, and `PUBLIC_BASE_URL`. `PUBLIC_BASE_URL + /google-calendar/callback` must exactly match a Google OAuth authorized redirect URI.
 - Keep the worker's processing lease and in-process scheduler guard paired: the lease recovers after crashes, while the guard prevents overlapping flushes in one bot process.
 - Known follow-up: the worker should re-check live batch/reflection state before persisting and sending a claimed batch, so mid-flight safety or `/new` cancellation cannot be overwritten by an older normal reply.
 
