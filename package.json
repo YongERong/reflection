@@ -16,6 +16,7 @@
     "test": "vitest run",
     "dev:bot": "node --env-file=.env --import tsx apps/bot/src/server.ts",
     "dev:bot:polling": "node --env-file=.env --import tsx apps/bot/src/polling.ts",
+    "dev:local": "node scripts/dev-env.mjs",
     "dev:dashboard": "vite --host 0.0.0.0 --port 3000 --config apps/dashboard/vite.config.ts",
     "eval:reflection": "node --env-file=.env --import tsx better-agents/evals/run-reflection-evals.ts",
     "eval:sufficiency": "node --env-file=.env --import tsx better-agents/evals/run-sufficiency-evals.ts",

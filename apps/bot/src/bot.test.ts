@@ -389,6 +389,27 @@ describe("Telegram Google Calendar linking", () => {
     });
   });
 
+  it("/calendar sends localhost connect URLs as plain text instead of inline buttons", async () => {
+    const store = new InMemoryReflectionStore();
+    const student = await store.getOrCreateStudent({
+      telegramUserId: "tg_calendar_localhost",
+      displayName: "Lin"
+    });
+
+    const response = await handleCalendarCommand({
+      store,
+      student,
+      telegramChatId: "chat-calendar",
+      publicBaseUrl: "http://localhost:8787",
+      enabled: true,
+      now: () => new Date("2026-05-11T01:00:00.000Z")
+    });
+
+    expect(response.replyMarkup).toBeUndefined();
+    expect(response.text).toContain("Open this link on the machine running the bot:");
+    expect(response.text).toMatch(/http:\/\/localhost:8787\/google-calendar\/connect\?token=/);
+  });
+
   it("consumes Google Calendar auth states exactly once", async () => {
     const store = new InMemoryReflectionStore();
     const student = await store.getOrCreateStudent({

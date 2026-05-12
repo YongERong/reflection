@@ -244,6 +244,9 @@ export function createReflectionBot(
   options: ReflectionBotOptions = {}
 ): Bot {
   const bot = new Bot(token);
+  bot.catch((error) => {
+    console.error("Error in Telegram bot middleware", error);
+  });
   const modelRouter = router ?? createModelRouter({ [defaultComparisonModel]: model });
   const responseDelaySeconds = options.responseDelaySeconds ?? 0;
   const replySplitRate = options.replySplitRate ?? 0;
@@ -595,29 +598,54 @@ export async function handleCalendarCommand(input: {
 
   const connectUrl = new URL("/google-calendar/connect", input.publicBaseUrl);
   connectUrl.searchParams.set("token", token);
-  const keyboard = new InlineKeyboard().url(
-    connection?.status === "active" ? "Reconnect Google Calendar" : "Connect Google Calendar",
-    connectUrl.toString()
-  );
+  const replyMarkup = telegramAllowsInlineUrl(connectUrl)
+    ? new InlineKeyboard().url(
+        connection?.status === "active" ? "Reconnect Google Calendar" : "Connect Google Calendar",
+        connectUrl.toString()
+      )
+    : undefined;
 
   if (connection?.status === "active") {
     return {
-      text: `Google Calendar is connected as ${connection.googleEmail}. Use the button to reconnect or update permissions. Send /disconnect_calendar to remove access.`,
-      replyMarkup: keyboard
+      text: withLocalCalendarLinkFallback(
+        replyMarkup
+          ? `Google Calendar is connected as ${connection.googleEmail}. Use the button to reconnect or update permissions. Send /disconnect_calendar to remove access.`
+          : `Google Calendar is connected as ${connection.googleEmail}. Use the link to reconnect or update permissions. Send /disconnect_calendar to remove access.`,
+        connectUrl,
+        replyMarkup
+      ),
+      replyMarkup
     };
   }
 
   if (connection?.status === "needs_reauth") {
     return {
-      text: "Google Calendar needs to be reconnected before I can add or edit events.",
-      replyMarkup: keyboard
+      text: withLocalCalendarLinkFallback(
+        "Google Calendar needs to be reconnected before I can add or edit events.",
+        connectUrl,
+        replyMarkup
+      ),
+      replyMarkup
     };
   }
 
   return {
-    text: "Connect Google Calendar so I can add and edit reflection events for you.",
-    replyMarkup: keyboard
+    text: withLocalCalendarLinkFallback(
+      "Connect Google Calendar so I can add and edit reflection events for you.",
+      connectUrl,
+      replyMarkup
+    ),
+    replyMarkup
   };
+}
+
+function telegramAllowsInlineUrl(url: URL): boolean {
+  return url.protocol === "https:";
+}
+
+function withLocalCalendarLinkFallback(message: string, url: URL, replyMarkup?: InlineKeyboard): string {
+  if (replyMarkup) return message;
+  return `${message}\n\nOpen this link on the machine running the bot:\n${url.toString()}`;
 }
 
 export async function handleDisconnectCalendarCommand(input: {
